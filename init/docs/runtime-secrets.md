@@ -57,6 +57,19 @@ account key is a fallback and follows the same handling rules.
 `credentials` attribute to the provider blocks or put credential JSON in HCL,
 `.tfvars`, state, saved plans, or Git.
 
+Ansible reaches direct GCP guests through an IAP `ProxyCommand`. The generated
+inventory supplies each instance name, zone, and validated project ID; the
+ignored private inventory supplies the OS Login user, SSH agent or key handoff,
+and reviewed host-key policy. Keep the IAP route private and do not put a
+private key path or generated inventory in Git. The GCP guest baseline requires
+the pinned source image to include `google-guest-agent` and
+`google-compute-engine-oslogin`. Use a Google-provided Debian 13 image or
+record equivalent package evidence for a reviewed custom image; the baseline
+does not install an unreviewed Google APT repository. Because the baseline
+uses Ansible `become`, the OS Login identity also needs the reviewed
+administrative login/sudo grant; INIT does not create or broaden that IAM
+binding.
+
 ## Private state and plans
 
 OpenTofu state remains under the private `.local` directory:
