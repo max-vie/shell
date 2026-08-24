@@ -13,6 +13,7 @@
     proxmox_thin_pool: "{{ shell_proxmox_thin_pool }}"
     proxmox_storage_id: "{{ shell_proxmox_storage_id }}"
     proxmox_pool_id: "{{ shell_proxmox_pool_id }}"
+    proxmox_uplink_interface: "{{ shell_proxmox_uplink_interface }}"
   tasks:
     - name: Require the Debian host identity
       ansible.builtin.assert:
@@ -22,6 +23,8 @@
             (proxmox_host_name | default(inventory_hostname))
           - ansible_distribution == "Debian"
           - ansible_distribution_major_version == "13"
+          - ansible_default_ipv4.address == shell_expected_address
+          - shell_expected_address == "10.77.0.220"
 
     - name: Read the installed Proxmox version
       ansible.builtin.command:
@@ -57,6 +60,19 @@
       changed_when: false
       register: guest_bridge
 
+    - name: Read the guest bridge link settings
+      ansible.builtin.command:
+        argv: [ip, -json, link, show, "{{ proxmox_bridge_name }}"]
+      changed_when: false
+      register: guest_bridge_link
+
+    - name: Require the declared guest bridge MTU
+      ansible.builtin.assert:
+        that:
+          - >-
+            ((guest_bridge_link.stdout | from_json)[0].mtu | int) ==
+            (shell_proxmox_bridge_mtu | int)
+
     - name: Require the declared guest gateway on the bridge
       ansible.builtin.assert:
         that:
@@ -77,16 +93,20 @@
       ansible.builtin.assert:
         that: ip_forwarding.stdout | trim == "1"
 
-    - name: Read the isolated NAT table
+    - name: Read the isolated NAT rules
       ansible.builtin.command:
-        argv: [nft, --json, list, table, ip, shell_init_nat]
+        argv: [nft, list, table, ip, shell_init_nat]
       changed_when: false
       register: nested_nat_table
 
-    - name: Require the isolated NAT table
+    - name: Require the isolated NAT policy
       ansible.builtin.assert:
         that:
-          - (nested_nat_table.stdout | from_json).nftables | length > 1
+          - "'policy drop' in nested_nat_table.stdout"
+          - "'masquerade' in nested_nat_table.stdout"
+          - shell_proxmox_guest_network in nested_nat_table.stdout
+          - proxmox_bridge_name in nested_nat_table.stdout
+          - proxmox_uplink_interface in nested_nat_table.stdout
 
     - name: Read the managed Proxmox datastore
       ansible.builtin.command:

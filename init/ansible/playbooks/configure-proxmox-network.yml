@@ -10,7 +10,7 @@
   vars:
     proxmox_uplink_interface: >-
       {{ shell_proxmox_uplink_interface |
-         default(ansible_default_ipv4.interface) }}
+         default('') }}
   handlers:
     - name: Apply the Proxmox bridge configuration
       ansible.builtin.command:
@@ -27,6 +27,15 @@
         name: nftables
         state: reloaded
   tasks:
+    - name: Require the declared nested host identity
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_hostname ==
+            (proxmox_host_name | default(inventory_hostname))
+          - ansible_default_ipv4.address == shell_expected_address
+          - shell_expected_address == "10.77.0.220"
+
     - name: Validate the nested network inputs
       ansible.builtin.assert:
         that:
@@ -39,6 +48,7 @@
           - >-
             proxmox_uplink_interface is
             match('^[A-Za-z0-9][A-Za-z0-9._:-]*$')
+          - proxmox_uplink_interface | length > 0
           - not proxmox_uplink_interface.startswith('replace-with-')
           - proxmox_uplink_interface != shell_proxmox_bridge_name
 
@@ -103,6 +113,7 @@
         owner: root
         group: root
         mode: "0600"
+        validate: /usr/sbin/nft --check --file %s
       notify: Reload nftables
 
     - name: Include the INIT nftables rules
@@ -121,3 +132,9 @@
         name: nftables
         enabled: true
         state: started
+
+    - name: Validate the complete nftables configuration
+      ansible.builtin.command:
+        argv: [nft, --check, --file, /etc/nftables.conf]
+      changed_when: false
+      when: not ansible_check_mode

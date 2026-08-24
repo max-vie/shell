@@ -15,6 +15,15 @@
     proxmox_release_key_sha256: >- # gitleaks:allow
       136673be77aba35dcce385b28737689ad64fd785a797e57897589aed08db6e45
   tasks:
+    - name: Require the declared nested host identity
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_hostname ==
+            (proxmox_host_name | default(inventory_hostname))
+          - ansible_default_ipv4.address == shell_expected_address
+          - shell_expected_address == "10.77.0.220"
+
     - name: Require Debian 13 before installing Proxmox
       ansible.builtin.assert:
         that:
