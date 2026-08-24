@@ -21,3 +21,11 @@ guest images, bootstraps hosts and guests, and produces the role-inventory input
 ## Documentation
 
 - [Architecture](../man/docs/architecture/platform-nodes.md)
+
+## Contents
+
+- [Infrastructure](opentofu/): shared GCP foundations, the direct-GCP K3s
+  cluster, Proxmox K3s guests, and reusable modules.
+- [Guest configuration](ansible/): private inventory handoff and read-only
+  node verification.
+- [INIT notes](docs/): runtime inputs and operational boundaries.
