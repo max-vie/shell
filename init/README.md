@@ -25,7 +25,10 @@ guest images, bootstraps hosts and guests, and produces the role-inventory input
 ## Contents
 
 - [Infrastructure](opentofu/): shared GCP foundations, the direct-GCP K3s
-  cluster, Proxmox K3s guests, and reusable modules.
-- [Guest configuration](ansible/): private inventory handoff and read-only
-  node verification.
+  cluster, the nested GCP Proxmox host, Proxmox K3s guests, and reusable
+  modules.
+- [Guest configuration](ansible/): nested-host setup, private inventory
+  handoff, and Debian guest verification.
+- [Guest images](images/): the pinned Debian `virt-customize` baseline used by
+  the Proxmox guests.
 - [INIT notes](docs/): runtime inputs and operational boundaries.

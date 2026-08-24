@@ -4,15 +4,15 @@ Last updated: 24.08.2026
 
 ## Summary
 
-Use `bpg/proxmox` `0.111.1` for the location-neutral Proxmox K3s guest root.
+Use `bpg/proxmox` `0.111.1` for the Proxmox K3s guest root.
 Read credentials from a private process environment, verify TLS, and keep
 guest state under the ignored `.local/` directory.
 
 ## Context
 
-ADR 002 leaves the Proxmox host in GCP or on premises. INIT therefore needs one
-guest root without hardcoded placement, credentials, or network values. BPG
-provides the required OpenTofu VM resources and API-token authentication.
+The Proxmox host runs inside GCP, but INIT still needs one guest root without
+hardcoded credentials or guest network values. BPG provides the required
+OpenTofu VM resources and API-token authentication.
 
 ## Decision
 
@@ -21,14 +21,18 @@ Use `bpg/proxmox` in `init/opentofu/proxmox/k3s/`. Read
 environment. Keep TLS verification enabled and keep credentials out of HCL,
 variable files, state, and plans.
 
-Clone an existing template into `proxmox-k3s-01`, `proxmox-k3s-02`, and
-`proxmox-k3s-03`. Keep the node, datastore, bridge, VM IDs, CPU, and memory as
+Upload one checksum-verified prepared Debian image and import it into
+`proxmox-k3s-01`, `proxmox-k3s-02`, and `proxmox-k3s-03`. Keep the node,
+datastores, bridge, VM IDs, CPU, memory, image path, and image checksum as
 private inputs. Keep state under `.local/opentofu/proxmox/k3s/`.
 
 ## Consequences
 
 INIT gains a repeatable guest plan but depends on a reachable Proxmox API, a
-usable template, and valid private inputs. The lockfile pins the provider.
+prepared Debian image, and valid private inputs. The lockfile pins the provider.
+Disabling automatic cloud-init package upgrades currently requires a
+privilege-separated `root@pam` token with ACLs limited to the INIT resources;
+the runtime secret note records this provider limitation.
 The root proves guest configuration only; K3s readiness, etcd quorum, network
 reachability, and recovery remain separate verification work.
 

@@ -28,14 +28,8 @@ domains and couple control-plane health, pod networking, and recovery to the
 link between environments. Two independent clusters keep each K3s failure
 domain explicit.
 
-The Proxmox guests require one Proxmox host. Two placement options remain
-open:
-
-1. Run Proxmox on one GCP virtual machine with nested virtualization.
-2. Run Proxmox on one on-premises host.
-
-This ADR records both placement options but selects neither. A separate ADR
-must choose the Proxmox host placement before provisioning. Other host
+The Proxmox guests require one Proxmox host. The host placement is selected by
+the separate nested-GCP placement decision before provisioning. Other host
 infrastructure and all services running on or around the clusters remain
 outside this ADR.
 

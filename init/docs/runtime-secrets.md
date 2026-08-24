@@ -11,10 +11,35 @@ environment:
 - `PROXMOX_VE_ENDPOINT` is the API endpoint.
 - `PROXMOX_VE_API_TOKEN` is the API token. Keep this value private.
 
+The local provider also needs two IAP TCP tunnels because the Proxmox host has
+no external address: API port `8006` is exposed on local port `18006`, and SSH
+port `22` is exposed on local port `10022`. Set `PROXMOX_VE_ENDPOINT` to the
+private local API endpoint without an `/api2/json` suffix, and supply the OS
+Login account through the ignored OpenTofu variables. The SSH upload uses the
+current `SSH_AUTH_SOCK`; do not put a private key in HCL. A private wrapper
+must start both tunnels and clean them up after OpenTofu exits.
+Set `PROXMOX_VE_TMPDIR` to a private directory with enough disk space for the
+prepared image; the provider can stage local image uploads there.
+
+Keep TLS verification enabled. The local API name and the control machine's
+trust store must validate the Proxmox certificate through the tunnel; a
+loopback endpoint with an untrusted or mismatched certificate is not an
+acceptable reason to set `PROXMOX_VE_INSECURE=true`.
+
 Do not put the token in HCL, `.tfvars`, state, saved plans, Git, or shell
 history. Set the variables only for the OpenTofu process, through a private
 wrapper or secret handoff. Use `umask 077` for any local handoff files and
 remove the variables after the command exits.
+
+The guest root sets Proxmox cloud-init package upgrades to `false`. The BPG
+provider documents that field as available only to a `root@pam` identity. Use
+a privilege-separated `root@pam` API token with ACLs limited to the INIT pool,
+image datastore, guest datastore, bridge, and declared VM IDs. Do not use an
+unrestricted root token. Replace this exception when INIT gains a separate
+cloud-init data handoff that works with a dedicated automation user.
+The current INIT playbooks do not create that API identity, token, or ACL
+tree. Supply and review them through the private SUDO handoff before any
+Proxmox plan.
 
 ## GCP authentication
 
@@ -38,7 +63,14 @@ OpenTofu state remains under the private `.local` directory:
 
 - `.local/opentofu/gcp/shared/`
 - `.local/opentofu/gcp/k3s/`
+- `.local/opentofu/gcp/proxmox-host/`
 - `.local/opentofu/proxmox/k3s/`
 
 Keep state and saved plans private because they contain infrastructure details,
 even when provider credentials are supplied through the environment.
+
+The Debian image workflow also writes downloaded sources, prepared images,
+manifests, and generated image inputs under `.local/init-images/`. Keep those
+files private; only the source checksum and preparation scripts belong in Git.
+`INIT_PUBLIC_KEY_FILE` must point to one public SSH key. `SHELL_IMAGE_ROOT`, if
+set, must remain below the checkout's private `.local` directory.

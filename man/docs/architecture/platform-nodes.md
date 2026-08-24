@@ -10,7 +10,7 @@ Service endpoints and workload placement are outside its scope.
 flowchart LR
     SHARED["Shared platform<br/>identity-01<br/>delivery-01"]
     GCP["Direct GCP<br/>gcp-k3s-01 to 03"]
-    PROXMOX["Proxmox<br/>proxmox-host<br/>proxmox-k3s-01 to 03"]
+    PROXMOX["Nested Proxmox on GCP<br/>proxmox-host<br/>proxmox-k3s-01 to 03"]
 
     SHARED --> GCP
     SHARED --> PROXMOX
@@ -38,15 +38,19 @@ The primary K3s cluster will run on three direct GCP virtual machines.
 
 ## Proxmox K3s Cluster
 
-The Proxmox variant will use one outer host and three K3s guests.
+The Proxmox variant will use one nested Proxmox host and three Debian K3s
+guests. The host runs as a private GCP VM with nested virtualization enabled.
 
 | Node | Placement | Role |
 | --- | --- | --- |
-| `proxmox-host` | GCP or on premises | Proxmox virtualization host |
+| `proxmox-host` | Private GCP VM at `10.77.0.220` | Proxmox virtualization host with nested virtualization |
 | `proxmox-k3s-01` | Proxmox guest | K3s server and embedded etcd member |
 | `proxmox-k3s-02` | Proxmox guest | K3s server and embedded etcd member |
 | `proxmox-k3s-03` | Proxmox guest | K3s server and embedded etcd member |
 
-The host placement remains open. The GCP option would use one private virtual
-machine with nested virtualization. The on-premises option would use one local
-host. The K3s guest names will stay the same in either placement.
+The GCP VPC remains `10.77.0.0/24`. The nested guest bridge uses the separate
+`10.66.0.0/24` network with gateway `10.66.0.1`; the three guests use
+`10.66.0.201` through `10.66.0.203`. Guest traffic is masqueraded through the
+private GCP host, and Ansible reaches guests through that host. The guests use
+`identity-01` at `10.77.0.210` as their declared DNS server. The GCP network,
+nested bridge, and guest interfaces use an MTU of `1460`.
