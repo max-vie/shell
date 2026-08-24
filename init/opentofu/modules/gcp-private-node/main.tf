@@ -8,6 +8,7 @@ resource "google_compute_address" "node" {
 }
 
 resource "google_compute_disk" "data" {
+  #checkov:skip=CKV_GCP_37:Google-managed encryption remains until SUDO owns a KMS key contract.
   project = var.project_id
   name    = "${var.node_name}-data"
   zone    = var.zone
@@ -23,6 +24,8 @@ resource "google_compute_disk" "data" {
 # least-privilege identity only when software inside the guest calls GCP APIs;
 # OpenTofu authentication through ADC is a separate concern.
 resource "google_compute_instance" "node" {
+  #checkov:skip=CKV_GCP_36:Packet forwarding is an explicit opt-in for K3s routing nodes.
+  #checkov:skip=CKV_GCP_38:Google-managed encryption remains until SUDO owns a KMS key contract.
   project                   = var.project_id
   name                      = var.node_name
   zone                      = var.zone
@@ -56,7 +59,10 @@ resource "google_compute_instance" "node" {
   }
 
   metadata = {
-    enable-oslogin = "TRUE"
+    # OS Login is the SSH trust boundary; project-wide metadata keys remain
+    # disabled so a broad project key cannot bypass the access contract.
+    block-project-ssh-keys = "TRUE"
+    enable-oslogin         = "TRUE"
   }
 
   scheduling {

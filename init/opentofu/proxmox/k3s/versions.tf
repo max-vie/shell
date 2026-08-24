@@ -18,4 +18,18 @@ terraform {
 provider "proxmox" {
   # Read the endpoint and API token from PROXMOX_VE_* environment variables;
   # keep credentials out of HCL, state, plans, Git, and shell history.
+  ssh {
+    # source_file/import_from needs SSH to the node; the private runtime wrapper
+    # supplies the IAP tunnel endpoint and the SSH agent supplies the key.
+    agent    = true
+    username = var.ssh_username
+
+    # A private GCP host is not directly routable from the control machine.
+    # A private wrapper owns the matching IAP TCP tunnel.
+    node {
+      name    = var.pve_node_name
+      address = var.ssh_address
+      port    = var.ssh_port
+    }
+  }
 }

@@ -63,17 +63,18 @@ module "k3s_nodes" {
   for_each = var.k3s_nodes
   source   = "../../modules/gcp-private-node"
 
-  project_id          = var.project_id
-  region              = local.shared.region
-  subnetwork_id       = local.shared.subnetwork_self_link
-  node_name           = each.key
-  zone                = each.value.zone
-  internal_address    = each.value.address
-  machine_type        = each.value.machine_type
-  source_image        = each.value.source_image
-  boot_disk_size_gb   = each.value.boot_disk_size_gb
-  data_disk_size_gb   = each.value.data_disk_size_gb
-  tags                = ["shell-gcp-k3s"]
+  project_id        = var.project_id
+  region            = local.shared.region
+  subnetwork_id     = local.shared.subnetwork_self_link
+  node_name         = each.key
+  zone              = each.value.zone
+  internal_address  = each.value.address
+  machine_type      = each.value.machine_type
+  source_image      = each.value.source_image
+  boot_disk_size_gb = each.value.boot_disk_size_gb
+  data_disk_size_gb = each.value.data_disk_size_gb
+  tags              = ["shell-gcp-k3s"]
+  # K3s/CNI routing needs forwarding for pod and service traffic.
   can_ip_forward      = true
   deletion_protection = var.deletion_protection
 }

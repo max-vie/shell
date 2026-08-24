@@ -1,0 +1,15 @@
+project_id = "replace-with-gcp-project-id"
+
+# Keep the pinned Debian image self-link in the ignored local tfvars file.
+source_image = "replace-with-reviewed-debian-image-self-link"
+
+region = "europe-west4"
+zone   = "europe-west4-a"
+name   = "proxmox-host"
+internal_address = "10.77.0.220"
+
+machine_type        = "n2-standard-8"
+boot_disk_size_gb   = 32
+data_disk_size_gb   = 200
+data_disk_type      = "pd-balanced"
+deletion_protection = true

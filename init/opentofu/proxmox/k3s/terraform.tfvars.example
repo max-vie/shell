@@ -1,35 +1,47 @@
 # The endpoint and token are supplied through the private process environment:
 # PROXMOX_VE_ENDPOINT and PROXMOX_VE_API_TOKEN.
+# Start the private IAP API and SSH tunnels before planning. The provider uses
+# the current SSH agent for image uploads through local port 10022.
 
 pve_node_name = "replace-with-proxmox-node"
 pool_id       = "replace-with-proxmox-pool"
-template_vm_id = 9000
 datastore_id  = "replace-with-proxmox-datastore"
 bridge_name   = "replace-with-proxmox-bridge"
+ssh_username  = "replace-with-gcp-os-login-user"
 
-guest_gateway     = "replace-with-guest-gateway"
-guest_dns_servers = ["replace-with-guest-dns"]
+image_datastore_id = "local"
+debian_image = {
+  path      = "replace-with-private-prepared-debian-image-path"
+  file_name = "debian-13-shell.qcow2"
+  sha256    = "replace-with-prepared-image-sha256"
+}
+
+guest_gateway     = "10.66.0.1"
+guest_dns_servers = ["10.77.0.210"]
 start_guests      = false
 
 k3s_nodes = {
   proxmox-k3s-01 = {
-    vm_id      = 320
-    address    = "replace-with-private-address/24"
-    cpu_cores  = 4
-    memory_mib = 8192
+    vm_id         = 320
+    address       = "10.66.0.201/24"
+    cpu_cores     = 4
+    memory_mib    = 8192
+    root_disk_gib = 32
   }
 
   proxmox-k3s-02 = {
-    vm_id      = 321
-    address    = "replace-with-private-address/24"
-    cpu_cores  = 4
-    memory_mib = 8192
+    vm_id         = 321
+    address       = "10.66.0.202/24"
+    cpu_cores     = 4
+    memory_mib    = 8192
+    root_disk_gib = 32
   }
 
   proxmox-k3s-03 = {
-    vm_id      = 322
-    address    = "replace-with-private-address/24"
-    cpu_cores  = 4
-    memory_mib = 8192
+    vm_id         = 322
+    address       = "10.66.0.203/24"
+    cpu_cores     = 4
+    memory_mib    = 8192
+    root_disk_gib = 32
   }
 }

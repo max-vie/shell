@@ -9,16 +9,28 @@ resource "google_compute_network" "shared" {
   name                    = var.network_name
   auto_create_subnetworks = false
   routing_mode            = "REGIONAL"
+  # GCP defaults to 1460; pin it so the nested bridge and guest NICs use the
+  # same frame size instead of depending on an implicit provider default.
+  mtu = 1460
 
   depends_on = [google_project_service.compute]
 }
 
 resource "google_compute_subnetwork" "shared" {
-  project       = var.project_id
-  name          = var.subnet_name
-  region        = var.region
-  network       = google_compute_network.shared.id
-  ip_cidr_range = var.subnet_cidr
+  project                  = var.project_id
+  name                     = var.subnet_name
+  region                   = var.region
+  network                  = google_compute_network.shared.id
+  ip_cidr_range            = var.subnet_cidr
+  private_ip_google_access = true
+
+  # Flow logs improve incident evidence but include metadata and add logging
+  # cost; this is an intentional platform-observability tradeoff.
+  log_config {
+    aggregation_interval = "INTERVAL_10_MIN"
+    flow_sampling        = 0.5
+    metadata             = "INCLUDE_ALL_METADATA"
+  }
 }
 
 resource "google_compute_router" "shared" {
