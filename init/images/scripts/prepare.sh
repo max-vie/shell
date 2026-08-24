@@ -39,6 +39,13 @@ source_dir=$local_root/source
 output_dir=$local_root/prepared
 manifest_file=$local_root/manifest.json
 variables_file=$local_root/proxmox-k3s.tfvars.json
+
+for private_directory in "$source_dir" "$output_dir"; do
+  if [[ -L "$private_directory" ]]; then
+    printf 'Refusing symlinked image directory: %s\n' "$private_directory" >&2
+    exit 2
+  fi
+done
 mkdir -p "$source_dir" "$output_dir"
 chmod 0700 "$local_root" "$source_dir" "$output_dir"
 
@@ -69,6 +76,10 @@ output_file=$(jq -er '.images.debian.output_file' "$lock_file")
 [[ "$source_file" == *.qcow2 && "$output_file" == *.qcow2 ]]
 
 source_image=$source_dir/$source_file
+if [[ -L "$source_image" ]]; then
+  printf 'Refusing symlinked cached source image: %s\n' "$source_image" >&2
+  exit 2
+fi
 if [[ ! -f "$source_image" ]]; then
   downloaded_image=$build_dir/source.download
   curl \
@@ -126,6 +137,11 @@ prepared_name=${output_file%.qcow2}-${prepared_sha256:0:12}.qcow2
 output_image=$output_dir/$prepared_name
 temporary_manifest=$build_dir/manifest.json
 temporary_variables=$build_dir/proxmox-k3s.tfvars.json
+
+if [[ -L "$output_image" ]]; then
+  printf 'Refusing symlinked prepared image: %s\n' "$output_image" >&2
+  exit 2
+fi
 
 jq -n \
   --arg source_url "$source_url" \

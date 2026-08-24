@@ -59,6 +59,51 @@ class TestImageWorkflow(unittest.TestCase):
         self.assertEqual(completed.returncode, 2)
         self.assertIn("must stay under", completed.stderr)
 
+    def test_prepare_refuses_symlinked_private_image_directory(self) -> None:
+        private_root = INIT_ROOT.parent / ".local"
+        with tempfile.TemporaryDirectory(dir=private_root) as temporary:
+            root = Path(temporary)
+            target = root / "source-target"
+            target.mkdir()
+            (root / "source").symlink_to(target, target_is_directory=True)
+            (root / "prepared").mkdir()
+
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            for command in (
+                "curl",
+                "jq",
+                "qemu-img",
+                "sha256sum",
+                "sha512sum",
+                "ssh-keygen",
+                "virt-cat",
+                "virt-customize",
+                "virt-inspector",
+                "virt-sysprep",
+            ):
+                executable = fake_bin / command
+                executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                executable.chmod(0o755)
+
+            public_key = root / "init.pub"
+            public_key.write_text("ssh-ed25519 AAAA test\n", encoding="utf-8")
+            environment = os.environ.copy()
+            environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+            environment["SHELL_IMAGE_ROOT"] = str(root)
+            environment["INIT_PUBLIC_KEY_FILE"] = str(public_key)
+
+            completed = subprocess.run(  # nosec B603
+                [str(PREPARE)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("symlinked image directory", completed.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
