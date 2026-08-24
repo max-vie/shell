@@ -66,10 +66,17 @@ class TestRenderNodeInventory(unittest.TestCase):
             f"proxmox-k3s-0{index}": {
                 "name": f"proxmox-k3s-0{index}",
                 "vm_id": 319 + index,
-                "address": f"10.88.0.20{index}/24",
+                "address": f"10.66.0.20{index}/24",
                 "node": "pve-01",
             }
             for index in range(1, 4)
+        }
+
+    def proxmox_host(self) -> dict[str, Any]:
+        return {
+            "instance_name": "proxmox-host",
+            "zone": "europe-west4-a",
+            "internal_ip": "10.77.0.220",
         }
 
     def args(
@@ -78,6 +85,7 @@ class TestRenderNodeInventory(unittest.TestCase):
         shared: dict[str, Any] | None = None,
         gcp_k3s: dict[str, Any] | None = None,
         proxmox_k3s: dict[str, Any] | None = None,
+        proxmox_host: dict[str, Any] | None = None,
         wrapped: bool = False,
     ) -> SimpleNamespace:
         # Test both `tofu output -json NAME` maps and complete output objects;
@@ -98,6 +106,11 @@ class TestRenderNodeInventory(unittest.TestCase):
                 self.proxmox_k3s_nodes() if proxmox_k3s is None else proxmox_k3s,
                 "nodes",
             ),
+            (
+                "proxmox-host.json",
+                self.proxmox_host() if proxmox_host is None else proxmox_host,
+                None,
+            ),
         ]
         paths: list[Path] = []
         for filename, value, key in values:
@@ -113,12 +126,21 @@ class TestRenderNodeInventory(unittest.TestCase):
                 if wrapped
                 else value
             )
+            if key is None and wrapped:
+                payload = {
+                    "proxmox_host": {
+                        "sensitive": False,
+                        "type": ["object", {}],
+                        "value": value,
+                    }
+                }
             path.write_text(json.dumps(payload), encoding="utf-8")
             paths.append(path)
         return SimpleNamespace(
             shared_nodes_file=paths[0],
             gcp_k3s_file=paths[1],
             proxmox_k3s_file=paths[2],
+            proxmox_host_file=paths[3],
             output=root / "inventory.json",
         )
 
@@ -160,10 +182,17 @@ class TestRenderNodeInventory(unittest.TestCase):
         self.assertEqual(hostvars["identity-01"]["shell_role"], "identity")
         self.assertEqual(hostvars["gcp-k3s-01"]["shell_transport"], "gcp_iap")
         self.assertEqual(hostvars["proxmox-k3s-01"]["proxmox_vm_id"], 320)
+        self.assertEqual(
+            value["all"]["children"]["proxmox_host"]["hosts"]["proxmox-host"][
+                "shell_transport"
+            ],
+            "gcp_iap",
+        )
 
     def test_complete_output_wrappers_are_accepted(self) -> None:
         value = self.build(wrapped=True)
         self.assertEqual(len(self.rendered_hosts(value)), 8)
+        self.assertIn("proxmox-host", value["all"]["children"]["proxmox_host"]["hosts"])
 
     def test_complete_output_requires_expected_key(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -184,6 +213,17 @@ class TestRenderNodeInventory(unittest.TestCase):
             with self.assertRaisesRegex(renderer.InventoryError, "malformed"):
                 renderer.build_inventory(args)
 
+    def test_complete_host_output_requires_expected_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            args = self.args(Path(temporary), wrapped=True)
+            payload = json.loads(args.proxmox_host_file.read_text(encoding="utf-8"))
+            payload["other_host"] = payload.pop("proxmox_host")
+            args.proxmox_host_file.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(
+                renderer.InventoryError, "missing proxmox_host"
+            ):
+                renderer.build_inventory(args)
+
     def test_missing_or_extra_node_is_rejected(self) -> None:
         shared = self.shared_nodes()
         del shared["delivery-01"]
@@ -193,19 +233,46 @@ class TestRenderNodeInventory(unittest.TestCase):
         ):
             self.build(shared=shared)
 
+    def test_gcp_contract_address_drift_is_rejected(self) -> None:
+        shared = self.shared_nodes()
+        shared["identity-01"]["internal_ip"] = "10.77.0.212"
+        with self.assertRaisesRegex(renderer.InventoryError, "contract address"):
+            self.build(shared=shared)
+
+        gcp_k3s = self.gcp_k3s_nodes()
+        gcp_k3s["gcp-k3s-01"]["internal_ip"] = "10.77.0.204"
+        with self.assertRaisesRegex(renderer.InventoryError, "contract address"):
+            self.build(gcp_k3s=gcp_k3s)
+
+    def test_invalid_gcp_zone_is_rejected(self) -> None:
+        gcp_k3s = self.gcp_k3s_nodes()
+        gcp_k3s["gcp-k3s-01"]["zone"] = "europe-west4-a;invalid"
+        with self.assertRaisesRegex(renderer.InventoryError, "invalid zone"):
+            self.build(gcp_k3s=gcp_k3s)
+
     def test_empty_node_map_is_rejected(self) -> None:
         with self.assertRaisesRegex(
             renderer.InventoryError, "shared GCP node set differs"
         ):
             self.build(shared={})
 
-    def test_duplicate_addresses_are_rejected(self) -> None:
+    def test_duplicate_gcp_address_is_rejected_as_contract_drift(self) -> None:
         gcp_k3s = self.gcp_k3s_nodes()
         gcp_k3s["gcp-k3s-02"]["internal_ip"] = "10.77.0.201"
-        with self.assertRaisesRegex(
-            renderer.InventoryError, "addresses must be unique"
-        ):
+        with self.assertRaisesRegex(renderer.InventoryError, "contract address"):
             self.build(gcp_k3s=gcp_k3s)
+
+    def test_proxmox_host_must_use_gcp_subnet(self) -> None:
+        host = self.proxmox_host()
+        host["internal_ip"] = "10.78.0.220"
+        with self.assertRaisesRegex(renderer.InventoryError, "10.77.0.0/24"):
+            self.build(proxmox_host=host)
+
+    def test_proxmox_host_contract_address_drift_is_rejected(self) -> None:
+        host = self.proxmox_host()
+        host["internal_ip"] = "10.77.0.219"
+        with self.assertRaisesRegex(renderer.InventoryError, "contract address"):
+            self.build(proxmox_host=host)
 
     def test_special_purpose_addresses_are_rejected(self) -> None:
         # These are rejection fixtures, not network bind addresses.
@@ -223,12 +290,12 @@ class TestRenderNodeInventory(unittest.TestCase):
 
     def test_invalid_cidr_prefix_is_rejected(self) -> None:
         proxmox_k3s = self.proxmox_k3s_nodes()
-        proxmox_k3s["proxmox-k3s-01"]["address"] = "10.88.0.201/33"
+        proxmox_k3s["proxmox-k3s-01"]["address"] = "10.66.0.201/33"
         with self.assertRaisesRegex(renderer.InventoryError, "invalid address"):
             self.build(proxmox_k3s=proxmox_k3s)
 
     def test_proxmox_address_requires_usable_host_cidr(self) -> None:
-        for address in ("10.88.0.201", "10.88.0.0/24", "10.88.0.255/24"):
+        for address in ("10.66.0.201", "10.66.0.0/24", "10.66.0.255/24"):
             with self.subTest(address=address):
                 proxmox_k3s = self.proxmox_k3s_nodes()
                 proxmox_k3s["proxmox-k3s-01"]["address"] = address
@@ -236,6 +303,18 @@ class TestRenderNodeInventory(unittest.TestCase):
                     renderer.InventoryError, "usable host CIDR"
                 ):
                     self.build(proxmox_k3s=proxmox_k3s)
+
+    def test_proxmox_guest_must_use_declared_guest_network(self) -> None:
+        proxmox_k3s = self.proxmox_k3s_nodes()
+        proxmox_k3s["proxmox-k3s-01"]["address"] = "10.67.0.201/24"
+        with self.assertRaisesRegex(renderer.InventoryError, "10.66.0.0/24"):
+            self.build(proxmox_k3s=proxmox_k3s)
+
+    def test_proxmox_contract_address_drift_is_rejected(self) -> None:
+        proxmox_k3s = self.proxmox_k3s_nodes()
+        proxmox_k3s["proxmox-k3s-01"]["address"] = "10.66.0.204/24"
+        with self.assertRaisesRegex(renderer.InventoryError, "contract address"):
+            self.build(proxmox_k3s=proxmox_k3s)
 
     def test_duplicate_proxmox_vm_ids_are_rejected(self) -> None:
         proxmox_k3s = self.proxmox_k3s_nodes()
@@ -268,6 +347,8 @@ class TestRenderNodeInventory(unittest.TestCase):
                 str(args.gcp_k3s_file),
                 "--proxmox-k3s-file",
                 str(args.proxmox_k3s_file),
+                "--proxmox-host-file",
+                str(args.proxmox_host_file),
                 "--output",
                 str(args.output),
                 "--validate-only",
@@ -288,6 +369,23 @@ class TestRenderNodeInventory(unittest.TestCase):
             self.assertEqual(stdout.getvalue(), "")
             self.assertIn("inventory handoff failed", stderr.getvalue())
 
+    def test_input_symlink_ancestor_and_invalid_utf8_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            real_parent = root / "real"
+            real_parent.mkdir()
+            input_file = real_parent / "nodes.json"
+            input_file.write_text("{}", encoding="utf-8")
+            linked_parent = root / "linked"
+            linked_parent.symlink_to(real_parent, target_is_directory=True)
+            with self.assertRaisesRegex(renderer.InventoryError, "symlink"):
+                renderer.load_json(linked_parent / "nodes.json", "nodes")
+
+            invalid_utf8 = root / "invalid.json"
+            invalid_utf8.write_bytes(b"\xff")
+            with self.assertRaisesRegex(renderer.InventoryError, "UTF-8"):
+                renderer.load_json(invalid_utf8, "nodes")
+
     @unittest.skipUnless(ANSIBLE_INVENTORY, "ansible-inventory unavailable")
     def test_generated_inventory_is_accepted_by_ansible(self) -> None:
         if ANSIBLE_INVENTORY is None:
@@ -303,7 +401,7 @@ class TestRenderNodeInventory(unittest.TestCase):
                 text=True,
             )
             inventory = json.loads(completed.stdout)
-            self.assertEqual(len(inventory["_meta"]["hostvars"]), 8)
+            self.assertEqual(len(inventory["_meta"]["hostvars"]), 9)
             self.assertIn("proxmox_k3s_servers", inventory)
 
     def test_atomic_output_is_private_and_symlinks_are_rejected(self) -> None:

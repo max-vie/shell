@@ -1,4 +1,4 @@
-"""Render the private Ansible inventory from the three OpenTofu roots.
+"""Render the private Ansible inventory from the OpenTofu roots.
 
 OpenTofu remains the source of truth for node names, addresses, zones, and VM
 IDs. This adapter validates those facts, derives role and transport labels from
@@ -12,6 +12,7 @@ import argparse
 import ipaddress
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -28,20 +29,39 @@ EXPECTED_SHARED = {
     "identity-01": "identity",
     "delivery-01": "delivery",
 }
+EXPECTED_SHARED_ADDRESSES = {
+    "identity-01": "10.77.0.210",
+    "delivery-01": "10.77.0.211",
+}
 EXPECTED_GCP_K3S = {
     "gcp-k3s-01",
     "gcp-k3s-02",
     "gcp-k3s-03",
+}
+EXPECTED_GCP_K3S_ADDRESSES = {
+    "gcp-k3s-01": "10.77.0.201",
+    "gcp-k3s-02": "10.77.0.202",
+    "gcp-k3s-03": "10.77.0.203",
 }
 EXPECTED_PROXMOX_K3S = {
     "proxmox-k3s-01",
     "proxmox-k3s-02",
     "proxmox-k3s-03",
 }
+EXPECTED_PROXMOX_K3S_ADDRESSES = {
+    "proxmox-k3s-01": "10.66.0.201/24",
+    "proxmox-k3s-02": "10.66.0.202/24",
+    "proxmox-k3s-03": "10.66.0.203/24",
+}
+# These maps are the reviewed platform contract. Rejecting address drift here
+# prevents a changed OpenTofu output from silently retargeting Ansible.
 RFC1918_NETWORKS = tuple(
     ipaddress.ip_network(cidr)
     for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
+PROXMOX_GUEST_NETWORK = ipaddress.ip_network("10.66.0.0/24")
+GCP_NODE_NETWORK = ipaddress.ip_network("10.77.0.0/24")
+GCP_ZONE_PATTERN = re.compile(r"^[a-z][a-z0-9-]+[0-9]-[a-z]$")
 
 
 class InventoryError(ValueError):
@@ -49,10 +69,15 @@ class InventoryError(ValueError):
 
 
 def load_json(path: Path, label: str) -> Any:
-    if path.is_symlink() or not path.is_file():
+    for component in (path, *path.parents):
+        if component.is_symlink():
+            raise InventoryError(f"{label} must not use a symlinked path: {component}")
+    if not path.is_file():
         raise InventoryError(f"{label} must be a regular file: {path}")
     try:
         return json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as error:
+        raise InventoryError(f"{label} must be UTF-8 text: {path}") from error
     except json.JSONDecodeError as error:
         raise InventoryError(f"{label} is not valid JSON: {path}") from error
 
@@ -80,8 +105,35 @@ def output_map(value: Any, key: str, label: str) -> dict[str, Any]:
     return value
 
 
+def output_object(value: Any, key: str, label: str) -> dict[str, Any]:
+    """Accept a raw object, named envelope, or complete output object."""
+
+    if not isinstance(value, dict):
+        raise InventoryError(f"{label} must contain an object")
+    envelope_keys = {"sensitive", "type", "value"}
+    if key in value:
+        envelope = value[key]
+        if not isinstance(envelope, dict) or not envelope_keys.issubset(envelope):
+            raise InventoryError(f"{label} has a malformed complete output envelope")
+        value = envelope
+    elif any(
+        isinstance(item, dict) and envelope_keys.issubset(item)
+        for item in value.values()
+    ):
+        raise InventoryError(f"complete output is missing {key}")
+    if any(envelope_key in value for envelope_key in envelope_keys):
+        if not envelope_keys.issubset(value):
+            raise InventoryError(f"{label} has a malformed complete output envelope")
+        if not isinstance(value["sensitive"], bool):
+            raise InventoryError(f"{label} output sensitivity metadata must be boolean")
+        value = value["value"]
+    if not isinstance(value, dict):
+        raise InventoryError(f"{label} must contain an object")
+    return value
+
+
 def require_string(value: Any, field: str, node_name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str) or not value or value != value.strip():
         raise InventoryError(f"{node_name} requires a non-empty {field}")
     return value
 
@@ -151,7 +203,18 @@ def normalize_gcp_nodes(
         if require_string(record.get("name"), "name", name) != name:
             raise InventoryError(f"{name} output name does not match its map key")
         address = private_ipv4(record.get("internal_ip"), "internal_ip", name)
+        expected_addresses = (
+            EXPECTED_SHARED_ADDRESSES
+            if cluster == "shared"
+            else EXPECTED_GCP_K3S_ADDRESSES
+        )
+        if address != expected_addresses[name]:
+            raise InventoryError(
+                f"{name} contract address must be {expected_addresses[name]}: {address}"
+            )
         zone = require_string(record.get("zone"), "zone", name)
+        if GCP_ZONE_PATTERN.fullmatch(zone) is None:
+            raise InventoryError(f"{name} has an invalid zone: {zone}")
         # These values are derived from the owning root. The current OpenTofu
         # outputs carry infrastructure facts, not Ansible policy labels.
         role = expected[name] if isinstance(expected, dict) else "k3s"
@@ -180,6 +243,15 @@ def normalize_proxmox_nodes(nodes: dict[str, Any]) -> list[dict[str, Any]]:
         address, address_cidr = private_interface(
             record.get("address"), "address", name
         )
+        if ipaddress.ip_interface(address_cidr).network != PROXMOX_GUEST_NETWORK:
+            raise InventoryError(
+                f"{name} address must belong to {PROXMOX_GUEST_NETWORK}: {address_cidr}"
+            )
+        if address_cidr != EXPECTED_PROXMOX_K3S_ADDRESSES[name]:
+            raise InventoryError(
+                f"{name} contract address must be "
+                f"{EXPECTED_PROXMOX_K3S_ADDRESSES[name]}: {address_cidr}"
+            )
         vm_id = record.get("vm_id")
         if isinstance(vm_id, bool) or not isinstance(vm_id, int) or vm_id <= 0:
             raise InventoryError(f"{name} requires a positive JSON integer vm_id")
@@ -201,18 +273,38 @@ def normalize_proxmox_nodes(nodes: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
-def validate_unique_nodes(nodes: list[dict[str, Any]]) -> None:
-    # Addresses must be unique across both independent clusters. VM IDs only
-    # exist on Proxmox, so that check is limited to records that carry one.
-    addresses = [node["address"] for node in nodes]
-    if len(addresses) != len(set(addresses)):
-        raise InventoryError("node addresses must be unique across all clusters")
+def normalize_proxmox_host(value: dict[str, Any]) -> dict[str, str]:
+    name = require_string(value.get("instance_name"), "instance_name", "proxmox host")
+    if name != "proxmox-host":
+        raise InventoryError(f"proxmox host name must be proxmox-host: {name}")
+    address = private_ipv4(value.get("internal_ip"), "internal_ip", name)
+    if ipaddress.ip_address(address) not in GCP_NODE_NETWORK:
+        raise InventoryError(
+            f"{name} address must belong to {GCP_NODE_NETWORK}: {address}"
+        )
+    if address != "10.77.0.220":
+        raise InventoryError(f"{name} contract address must be 10.77.0.220: {address}")
+    zone = require_string(value.get("zone"), "zone", name)
+    if GCP_ZONE_PATTERN.fullmatch(zone) is None:
+        raise InventoryError(f"{name} has an invalid zone: {zone}")
+    return {
+        "name": name,
+        "address": address,
+        "zone": zone,
+    }
+
+
+def validate_unique_vm_ids(nodes: list[dict[str, Any]]) -> None:
+    # VM IDs only exist on Proxmox, so this check is limited to records that
+    # carry one.
     vm_ids = [node["proxmox_vm_id"] for node in nodes if "proxmox_vm_id" in node]
     if len(vm_ids) != len(set(vm_ids)):
         raise InventoryError("Proxmox VM IDs must be unique")
 
 
-def inventory(nodes: list[dict[str, Any]]) -> dict[str, Any]:
+def inventory(
+    nodes: list[dict[str, Any]], proxmox_host: dict[str, str]
+) -> dict[str, Any]:
     # Keep cluster groups separate while exposing role groups for later
     # identity and delivery playbooks.
     group_hosts: dict[str, dict[str, dict[str, Any]]] = {
@@ -245,6 +337,8 @@ def inventory(nodes: list[dict[str, Any]]) -> dict[str, Any]:
                     "shell_address_cidr": node["address_cidr"],
                     "proxmox_vm_id": node["proxmox_vm_id"],
                     "proxmox_node": node["proxmox_node"],
+                    "proxmox_host": proxmox_host["name"],
+                    "proxmox_host_address": proxmox_host["address"],
                 }
             )
             group = "proxmox_k3s_servers"
@@ -263,6 +357,18 @@ def inventory(nodes: list[dict[str, Any]]) -> dict[str, Any]:
                     }
                 },
                 **{group: {"hosts": hosts} for group, hosts in role_hosts.items()},
+                "proxmox_host": {
+                    "hosts": {
+                        proxmox_host["name"]: {
+                            "ansible_host": proxmox_host["address"],
+                            "shell_expected_address": proxmox_host["address"],
+                            "shell_role": "proxmox-host",
+                            "shell_cluster": "proxmox",
+                            "shell_transport": "gcp_iap",
+                            "gcp_zone": proxmox_host["zone"],
+                        }
+                    }
+                },
             }
         }
     }
@@ -284,13 +390,20 @@ def build_inventory(args: argparse.Namespace) -> dict[str, Any]:
         "nodes",
         "Proxmox K3s nodes",
     )
+    proxmox_host = normalize_proxmox_host(
+        output_object(
+            load_json(args.proxmox_host_file, "Proxmox host"),
+            "proxmox_host",
+            "Proxmox host",
+        )
+    )
     nodes = [
         *normalize_gcp_nodes(shared, EXPECTED_SHARED, "shared"),
         *normalize_gcp_nodes(gcp_k3s, EXPECTED_GCP_K3S, "gcp"),
         *normalize_proxmox_nodes(proxmox),
     ]
-    validate_unique_nodes(nodes)
-    return inventory(nodes)
+    validate_unique_vm_ids(nodes)
+    return inventory(nodes, proxmox_host)
 
 
 def atomic_write(path: Path, value: dict[str, Any]) -> None:
@@ -321,11 +434,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--shared-nodes-file", type=Path, required=True)
     parser.add_argument("--gcp-k3s-file", type=Path, required=True)
     parser.add_argument("--proxmox-k3s-file", type=Path, required=True)
+    parser.add_argument("--proxmox-host-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--validate-only",
         action="store_true",
-        help="validate the three outputs without writing an inventory",
+        help="validate the outputs without writing an inventory",
     )
     return parser
 
