@@ -5,6 +5,16 @@
 # keep that file private and never commit it.
 all:
   children:
+    proxmox_host:
+      vars:
+        proxmox_host_name: proxmox-host
+        shell_proxmox_uplink_interface: replace-with-gcp-uplink-interface
+        shell_proxmox_data_device: replace-with-proxmox-data-device
+      hosts:
+        proxmox-host:
+          ansible_host: replace-with-proxmox-host-gcp-private-address
+          shell_expected_address: replace-with-proxmox-host-gcp-private-address
+          shell_transport: gcp_iap
     shell_nodes:
       children:
         gcp_shared_nodes:
@@ -29,11 +39,14 @@ all:
         proxmox_k3s_servers:
           hosts:
             proxmox-k3s-01:
-              ansible_host: replace-with-proxmox-k3s-01-address
-              shell_expected_address: replace-with-proxmox-k3s-01-address
+              ansible_host: 10.66.0.201
+              shell_expected_address: 10.66.0.201
+              shell_address_cidr: 10.66.0.201/24
             proxmox-k3s-02:
-              ansible_host: replace-with-proxmox-k3s-02-address
-              shell_expected_address: replace-with-proxmox-k3s-02-address
+              ansible_host: 10.66.0.202
+              shell_expected_address: 10.66.0.202
+              shell_address_cidr: 10.66.0.202/24
             proxmox-k3s-03:
-              ansible_host: replace-with-proxmox-k3s-03-address
-              shell_expected_address: replace-with-proxmox-k3s-03-address
+              ansible_host: 10.66.0.203
+              shell_expected_address: 10.66.0.203
+              shell_address_cidr: 10.66.0.203/24

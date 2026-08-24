@@ -1,0 +1,141 @@
+---
+# Read-only proof for the nested host after installation and network setup.
+- name: Verify the nested Proxmox host
+  hosts: proxmox_host
+  gather_facts: true
+  become: true
+  vars_files:
+    - ../vars/proxmox.yml
+  vars:
+    proxmox_guest_gateway: "{{ shell_proxmox_guest_gateway }}"
+    proxmox_bridge_name: "{{ shell_proxmox_bridge_name }}"
+    proxmox_volume_group: "{{ shell_proxmox_volume_group }}"
+    proxmox_thin_pool: "{{ shell_proxmox_thin_pool }}"
+    proxmox_storage_id: "{{ shell_proxmox_storage_id }}"
+    proxmox_pool_id: "{{ shell_proxmox_pool_id }}"
+  tasks:
+    - name: Require the Debian host identity
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_hostname ==
+            (proxmox_host_name | default(inventory_hostname))
+          - ansible_distribution == "Debian"
+          - ansible_distribution_major_version == "13"
+
+    - name: Read the installed Proxmox version
+      ansible.builtin.command:
+        argv: [pvesh, get, /version, --output-format, json]
+      changed_when: false
+
+    - name: Read the installed Proxmox manager package
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, "-f=${Version}", pve-manager]
+      changed_when: false
+      register: installed_proxmox_version
+
+    - name: Read Proxmox users
+      ansible.builtin.command:
+        argv: [pveum, user, list, --output-format, json]
+      changed_when: false
+
+    - name: Read Proxmox virtual machines
+      ansible.builtin.command:
+        argv: [qm, list]
+      changed_when: false
+
+    - name: Require the pinned Proxmox manager version
+      ansible.builtin.assert:
+        that:
+          - >-
+            installed_proxmox_version.stdout ==
+            shell_proxmox_package_version
+
+    - name: Read the guest bridge address
+      ansible.builtin.command:
+        argv: [ip, -json, address, show, "{{ proxmox_bridge_name }}"]
+      changed_when: false
+      register: guest_bridge
+
+    - name: Require the declared guest gateway on the bridge
+      ansible.builtin.assert:
+        that:
+          - >-
+            guest_bridge.stdout | from_json |
+            map(attribute='addr_info') | flatten |
+            selectattr('family', 'equalto', 'inet') |
+            selectattr('local', 'equalto', proxmox_guest_gateway) |
+            list | length == 1
+
+    - name: Read the forwarding sysctl
+      ansible.builtin.command:
+        argv: [sysctl, --value, net.ipv4.ip_forward]
+      changed_when: false
+      register: ip_forwarding
+
+    - name: Require IPv4 forwarding for nested guests
+      ansible.builtin.assert:
+        that: ip_forwarding.stdout | trim == "1"
+
+    - name: Read the isolated NAT table
+      ansible.builtin.command:
+        argv: [nft, --json, list, table, ip, shell_init_nat]
+      changed_when: false
+      register: nested_nat_table
+
+    - name: Require the isolated NAT table
+      ansible.builtin.assert:
+        that:
+          - (nested_nat_table.stdout | from_json).nftables | length > 1
+
+    - name: Read the managed Proxmox datastore
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - get
+          - "/storage/{{ proxmox_storage_id }}"
+          - --output-format
+          - json
+      changed_when: false
+      register: managed_storage
+
+    - name: Require the declared LVM-thin datastore
+      ansible.builtin.assert:
+        that:
+          - (managed_storage.stdout | from_json).type == "lvmthin"
+          - >-
+            (managed_storage.stdout | from_json).vgname ==
+            proxmox_volume_group
+          - >-
+            (managed_storage.stdout | from_json).thinpool ==
+            proxmox_thin_pool
+
+    - name: Read configured Proxmox pools
+      ansible.builtin.command:
+        argv: [pvesh, get, /pools, --output-format, json]
+      changed_when: false
+      register: proxmox_pools
+
+    - name: Require the scoped INIT guest pool
+      ansible.builtin.assert:
+        that:
+          - >-
+            proxmox_pool_id in
+            (proxmox_pools.stdout | from_json |
+             map(attribute='poolid') | list)
+
+    - name: Read the KVM device
+      ansible.builtin.stat:
+        path: /dev/kvm
+      register: kvm_device
+
+    - name: Read virtualization CPU flags
+      ansible.builtin.command:
+        argv: [grep, -E, -m, "1", "(vmx|svm)", /proc/cpuinfo]
+      changed_when: false
+
+    - name: Require nested virtualization at runtime
+      ansible.builtin.assert:
+        that:
+          - kvm_device.stat.exists
+          - kvm_device.stat.ischr

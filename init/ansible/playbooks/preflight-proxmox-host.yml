@@ -1,0 +1,59 @@
+---
+# Read-only gate for the Debian GCP VM that will run nested Proxmox.
+- name: Preflight the nested Proxmox host
+  hosts: proxmox_host
+  gather_facts: true
+  become: true
+  vars_files:
+    - ../vars/proxmox.yml
+  tasks:
+    - name: Require the declared host identity
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_hostname ==
+            (proxmox_host_name | default(inventory_hostname))
+          - ansible_distribution == "Debian"
+          - ansible_distribution_major_version == "13"
+          - ansible_default_ipv4.address == shell_expected_address
+          - shell_expected_address == "10.77.0.220"
+          - >-
+            proxmox_host_name | default('') is
+            match('^[a-z]([-a-z0-9]*[a-z0-9])?$')
+          - ansible_processor_vcpus | int >= 8
+          - ansible_memtotal_mb | int >= 30000
+        fail_msg: "The target is not the declared Debian 13 Proxmox host."
+
+    - name: Require the private host configuration inputs
+      ansible.builtin.assert:
+        that:
+          - >-
+            shell_proxmox_data_device | default('') is
+            match('^/dev/disk/by-id/[A-Za-z0-9._:+-]+$')
+          - >-
+            shell_proxmox_uplink_interface | default('') is
+            match('^[A-Za-z0-9][A-Za-z0-9._:-]*$')
+          - >-
+            not (shell_proxmox_uplink_interface | default('')).startswith(
+            'replace-with-')
+          - >-
+            shell_proxmox_package_version is
+            match('^[0-9][A-Za-z0-9.+:~_-]*$')
+        fail_msg: "The private Proxmox host inputs are incomplete."
+
+    - name: Read the KVM device
+      ansible.builtin.stat:
+        path: /dev/kvm
+      register: kvm_device
+
+    - name: Require hardware virtualization on the outer host
+      ansible.builtin.assert:
+        that:
+          - kvm_device.stat.exists
+          - kvm_device.stat.ischr
+        fail_msg: "Nested virtualization is unavailable at /dev/kvm."
+
+    - name: Read virtualization CPU flags
+      ansible.builtin.command:
+        argv: [grep, -E, -m, "1", "(vmx|svm)", /proc/cpuinfo]
+      changed_when: false

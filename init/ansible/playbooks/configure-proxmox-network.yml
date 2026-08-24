@@ -1,0 +1,123 @@
+---
+# Keep the GCP uplink under systemd-networkd. The nested guests use a separate
+# bridge and are masqueraded through that uplink.
+- name: Configure the nested Proxmox guest network
+  hosts: proxmox_host
+  gather_facts: true
+  become: true
+  vars_files:
+    - ../vars/proxmox.yml
+  vars:
+    proxmox_uplink_interface: >-
+      {{ shell_proxmox_uplink_interface |
+         default(ansible_default_ipv4.interface) }}
+  handlers:
+    - name: Apply the Proxmox bridge configuration
+      ansible.builtin.command:
+        argv: [ifreload, -a]
+      changed_when: true
+
+    - name: Apply IPv4 forwarding
+      ansible.builtin.command:
+        argv: [sysctl, --load, /etc/sysctl.d/90-shell-proxmox.conf]
+      changed_when: true
+
+    - name: Reload nftables
+      ansible.builtin.systemd_service:
+        name: nftables
+        state: reloaded
+  tasks:
+    - name: Validate the nested network inputs
+      ansible.builtin.assert:
+        that:
+          - shell_proxmox_guest_network == "10.66.0.0/24"
+          - shell_proxmox_guest_gateway == "10.66.0.1"
+          - >-
+            shell_proxmox_bridge_name is
+            match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+          - shell_proxmox_bridge_mtu == 1460
+          - >-
+            proxmox_uplink_interface is
+            match('^[A-Za-z0-9][A-Za-z0-9._:-]*$')
+          - not proxmox_uplink_interface.startswith('replace-with-')
+          - proxmox_uplink_interface != shell_proxmox_bridge_name
+
+    - name: Ensure the network interfaces include directory exists
+      ansible.builtin.file:
+        path: /etc/network/interfaces.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Include the Proxmox interface definitions
+      ansible.builtin.lineinfile:
+        path: /etc/network/interfaces
+        line: "source /etc/network/interfaces.d/*"
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Apply the Proxmox bridge configuration
+
+    - name: Write the isolated guest bridge definition
+      # The bridge is private to the nested guests; outbound traffic is NATed
+      # through the GCP uplink and no direct guest ingress is opened here.
+      ansible.builtin.copy:
+        dest: /etc/network/interfaces.d/shell-proxmox-bridge
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          auto {{ shell_proxmox_bridge_name }}
+          iface {{ shell_proxmox_bridge_name }} inet static
+              address {{ shell_proxmox_guest_gateway }}/24
+              mtu {{ shell_proxmox_bridge_mtu }}
+              bridge-ports none
+              bridge-stp off
+              bridge-fd 0
+      notify: Apply the Proxmox bridge configuration
+
+    - name: Enable IPv4 forwarding for nested guests
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/90-shell-proxmox.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          net.ipv4.ip_forward = 1
+      notify: Apply IPv4 forwarding
+
+    - name: Ensure the nftables include directory exists
+      ansible.builtin.file:
+        path: /etc/nftables.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the isolated NAT rules
+      ansible.builtin.template:
+        src: templates/isolated-nat.nft.j2
+        dest: /etc/nftables.d/shell-proxmox-nat.nft
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Reload nftables
+
+    - name: Include the INIT nftables rules
+      ansible.builtin.lineinfile:
+        path: /etc/nftables.conf
+        line: 'include "/etc/nftables.d/*.nft"'
+        insertafter: EOF
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload nftables
+
+    - name: Enable the nftables service
+      ansible.builtin.systemd_service:
+        name: nftables
+        enabled: true
+        state: started

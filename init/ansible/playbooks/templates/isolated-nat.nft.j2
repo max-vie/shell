@@ -1,0 +1,14 @@
+# Managed by INIT. Only the nested guest network is masqueraded through the
+# GCP uplink; the uplink itself remains owned by the GCP guest image.
+table ip shell_init_nat {
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+        iifname "{{ shell_proxmox_bridge_name }}" oifname "{{ proxmox_uplink_interface }}" accept
+        iifname "{{ proxmox_uplink_interface }}" oifname "{{ shell_proxmox_bridge_name }}" ct state established,related accept
+    }
+
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        ip saddr {{ shell_proxmox_guest_network }} oifname "{{ proxmox_uplink_interface }}" masquerade
+    }
+}

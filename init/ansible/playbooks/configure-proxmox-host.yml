@@ -1,0 +1,281 @@
+---
+# Configure only an empty disk or the complete storage mapping already owned
+# by INIT. Proxmox API credentials remain a private runtime handoff.
+- name: Configure the nested Proxmox host
+  hosts: proxmox_host
+  gather_facts: true
+  become: true
+  vars_files:
+    - ../vars/proxmox.yml
+  vars:
+    proxmox_volume_group: "{{ shell_proxmox_volume_group }}"
+    proxmox_thin_pool: "{{ shell_proxmox_thin_pool }}"
+    proxmox_storage_id: "{{ shell_proxmox_storage_id }}"
+    proxmox_pool_id: "{{ shell_proxmox_pool_id }}"
+  tasks:
+    - name: Validate the host storage contract
+      ansible.builtin.assert:
+        that:
+          - shell_proxmox_data_device is defined
+          - >-
+            shell_proxmox_data_device | default('') is
+            match('^/dev/disk/by-id/[A-Za-z0-9._:+-]+$')
+          - proxmox_volume_group is match('^[A-Za-z0-9_+.-]+$')
+          - proxmox_thin_pool is match('^[A-Za-z0-9_+.-]+$')
+          - proxmox_storage_id is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+          - proxmox_pool_id is match('^[A-Za-z0-9][A-Za-z0-9._-]*$')
+        fail_msg: "The private Proxmox storage contract is incomplete."
+
+    - name: Resolve the declared Proxmox data device
+      ansible.builtin.command:
+        argv: [readlink, -f, "{{ shell_proxmox_data_device }}"]
+      changed_when: false
+      check_mode: false
+      register: proxmox_data_device
+
+    - name: Require the declared data block device
+      ansible.builtin.stat:
+        path: "{{ proxmox_data_device.stdout }}"
+      register: proxmox_data_device_stat
+
+    - name: Resolve the root filesystem source
+      ansible.builtin.command:
+        argv: [findmnt, --noheadings, --output, SOURCE, "/"]
+      changed_when: false
+      check_mode: false
+      register: root_filesystem_source
+
+    - name: Resolve the root filesystem block path
+      ansible.builtin.command:
+        argv: [readlink, -f, "{{ root_filesystem_source.stdout | trim }}"]
+      changed_when: false
+      check_mode: false
+      register: root_filesystem_device
+
+    - name: Read the root filesystem device chain
+      ansible.builtin.command:
+        argv:
+          - lsblk
+          - --inverse
+          - --raw
+          - --noheadings
+          - --output
+          - PATH
+          - "{{ root_filesystem_device.stdout | trim }}"
+      changed_when: false
+      check_mode: false
+      register: root_device_chain
+
+    - name: Read data-device mount points
+      ansible.builtin.command:
+        argv:
+          - lsblk
+          - --raw
+          - --noheadings
+          - --paths
+          - --output
+          - MOUNTPOINTS
+          - "{{ proxmox_data_device.stdout }}"
+      changed_when: false
+      check_mode: false
+      register: proxmox_data_mounts
+
+    - name: Read structured physical-volume state
+      ansible.builtin.command:
+        argv: [pvs, --reportformat, json, --options, "pv_name,vg_name"]
+      changed_when: false
+      check_mode: false
+      register: proxmox_pvs
+
+    - name: Read structured volume-group state
+      ansible.builtin.command:
+        argv: [vgs, --reportformat, json, --options, "vg_name,pv_count"]
+      changed_when: false
+      check_mode: false
+      register: proxmox_vgs
+
+    - name: Read structured logical-volume state
+      ansible.builtin.command:
+        argv: [lvs, --reportformat, json, --options, "vg_name,lv_name,lv_attr"]
+      changed_when: false
+      check_mode: false
+      register: proxmox_lvs
+
+    - name: Inspect storage signatures without changing them
+      ansible.builtin.command:
+        argv: [wipefs, --no-act, --json, "{{ proxmox_data_device.stdout }}"]
+      changed_when: false
+      check_mode: false
+      register: proxmox_storage_signatures
+
+    - name: Read data-device holders
+      ansible.builtin.command:
+        argv:
+          - find
+          - >-
+            /sys/class/block/{{ proxmox_data_device.stdout | basename }}/holders
+          - -mindepth
+          - "1"
+          - -maxdepth
+          - "1"
+          - -printf
+          - "%f\n"
+      changed_when: false
+      check_mode: false
+      register: proxmox_storage_holders
+
+    - name: Read configured Proxmox storage
+      ansible.builtin.command:
+        argv: [pvesh, get, /storage, --output-format, json]
+      changed_when: false
+      check_mode: false
+      register: proxmox_storage
+
+    - name: Read configured Proxmox pools
+      ansible.builtin.command:
+        argv: [pvesh, get, /pools, --output-format, json]
+      changed_when: false
+      check_mode: false
+      register: proxmox_pools
+
+    - name: Select the declared storage state
+      ansible.builtin.set_fact:
+        proxmox_data_pv: >-
+          {{ (proxmox_pvs.stdout | from_json).report[0].pv |
+             selectattr('pv_name', 'equalto', proxmox_data_device.stdout) |
+             list }}
+        proxmox_expected_vg: >-
+          {{ (proxmox_vgs.stdout | from_json).report[0].vg |
+             selectattr('vg_name', 'equalto', proxmox_volume_group) | list }}
+        proxmox_expected_thin_pool: >-
+          {{ (proxmox_lvs.stdout | from_json).report[0].lv |
+             selectattr('vg_name', 'equalto', proxmox_volume_group) |
+             selectattr('lv_name', 'equalto', proxmox_thin_pool) | list }}
+        proxmox_storage_mapping: >-
+          {{ proxmox_storage.stdout | from_json |
+             selectattr('storage', 'equalto', proxmox_storage_id) | list }}
+
+    - name: Refuse unmanaged or unsafe storage state
+      ansible.builtin.assert:
+        that:
+          - proxmox_data_device_stat.stat.exists
+          - proxmox_data_device_stat.stat.isblk
+          - proxmox_data_device.stdout not in root_device_chain.stdout_lines
+          - >-
+            proxmox_data_mounts.stdout_lines | map('trim') |
+            reject('equalto', '') | list | length == 0
+          - >-
+            proxmox_storage_holders.stdout_lines | length == 0 or
+            (proxmox_data_pv | length == 1 and
+             proxmox_data_pv[0].vg_name == proxmox_volume_group)
+          - >-
+            (proxmox_data_pv | length == 0 and
+             proxmox_expected_vg | length == 0 and
+             proxmox_expected_thin_pool | length == 0 and
+             proxmox_storage_mapping | length == 0 and
+             (proxmox_storage_signatures.stdout |
+              from_json).signatures | length == 0) or
+            (proxmox_data_pv | length == 1 and
+             proxmox_data_pv[0].vg_name in ['', proxmox_volume_group] and
+             proxmox_expected_vg | length <= 1 and
+             proxmox_expected_thin_pool | length <= 1 and
+             proxmox_storage_mapping | length <= 1 and
+             (proxmox_data_pv[0].vg_name == '' or
+              proxmox_expected_vg | length == 1) and
+             (proxmox_data_pv[0].vg_name != '' or
+              (proxmox_expected_vg | length == 0 and
+               proxmox_expected_thin_pool | length == 0 and
+               proxmox_storage_mapping | length == 0)) and
+             (proxmox_expected_vg | length == 0 or
+              proxmox_expected_vg[0].pv_count | int == 1) and
+             (proxmox_storage_mapping | length == 0 or
+              (proxmox_expected_thin_pool | length == 1 and
+               proxmox_storage_mapping[0].type == 'lvmthin' and
+               proxmox_storage_mapping[0].vgname == proxmox_volume_group and
+               proxmox_storage_mapping[0].thinpool == proxmox_thin_pool)))
+        fail_msg: >-
+          The declared disk is neither blank nor the complete INIT-managed
+          storage mapping. Refusing to initialize or reuse it.
+
+    - name: Describe the approved storage changes
+      ansible.builtin.debug:
+        msg: >-
+          Initialize {{ proxmox_data_device.stdout }} as
+          {{ proxmox_volume_group }}/{{ proxmox_thin_pool }}, register
+          {{ proxmox_storage_id }}, and create pool {{ proxmox_pool_id }}.
+      when: ansible_check_mode
+      changed_when: >-
+        proxmox_data_pv | length == 0 or
+        proxmox_expected_thin_pool | length == 0 or
+        proxmox_storage_mapping | length == 0
+
+    - name: Initialize the LVM physical volume
+      # This is destructive on a blank disk. The assertion above refuses a
+      # mounted, held, signed, or foreign LVM device before this task runs.
+      ansible.builtin.command:
+        argv: [pvcreate, --yes, "{{ proxmox_data_device.stdout }}"]
+      when:
+        - proxmox_data_pv | length == 0
+        - not ansible_check_mode
+      changed_when: true
+
+    - name: Create the dedicated volume group
+      ansible.builtin.command:
+        argv:
+          - vgcreate
+          - "{{ proxmox_volume_group }}"
+          - "{{ proxmox_data_device.stdout }}"
+      when:
+        - proxmox_expected_vg | length == 0
+        - not ansible_check_mode
+      changed_when: true
+
+    - name: Create the dedicated LVM thin pool
+      ansible.builtin.command:
+        argv:
+          - lvcreate
+          - --type
+          - thin-pool
+          - --extents
+          - 95%FREE
+          - --name
+          - "{{ proxmox_thin_pool }}"
+          - "{{ proxmox_volume_group }}"
+      when:
+        - proxmox_expected_thin_pool | length == 0
+        - not ansible_check_mode
+      changed_when: true
+
+    - name: Register the LVM-thin datastore
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - add
+          - lvmthin
+          - "{{ proxmox_storage_id }}"
+          - --vgname
+          - "{{ proxmox_volume_group }}"
+          - --thinpool
+          - "{{ proxmox_thin_pool }}"
+          - --content
+          - images,rootdir
+      when:
+        - proxmox_storage_mapping | length == 0
+        - not ansible_check_mode
+      changed_when: true
+
+    - name: Create the scoped INIT guest pool
+      ansible.builtin.command:
+        argv:
+          - pveum
+          - pool
+          - add
+          - "{{ proxmox_pool_id }}"
+          - --comment
+          - "SHELL INIT guests"
+      when:
+        - >-
+          proxmox_pool_id not in
+          (proxmox_pools.stdout | from_json | map(attribute='poolid') | list)
+        - not ansible_check_mode
+      changed_when: true

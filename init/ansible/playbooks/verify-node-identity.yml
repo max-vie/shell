@@ -4,17 +4,26 @@
 # private inventory.
 - name: Verify SHELL node identity and address
   hosts: shell_nodes
-  gather_facts: true
+  gather_facts: false
   serial: 1
   any_errors_fatal: true
   vars:
     ipv4_octet_pattern: '(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
   tasks:
+    - name: Wait for the private SSH route
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    - name: Gather node facts
+      ansible.builtin.setup:
+
     - name: Require the inventory address contract
       ansible.builtin.assert:
         that:
           - ansible_host is defined
           - shell_expected_address is defined
+          - ansible_host == shell_expected_address
           - >-
             shell_expected_address is match(
             '^(?:' ~ ipv4_octet_pattern ~ '\\.){3}' ~

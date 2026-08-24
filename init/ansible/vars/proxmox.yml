@@ -1,0 +1,17 @@
+---
+# Public contract values shared by the nested-host and guest playbooks. Rotate
+# the package pin only after reviewing the Proxmox no-subscription repository.
+# Package pin last reviewed: 2026-08-24.
+shell_proxmox_package_version: "9.2.11"
+shell_proxmox_guest_network: 10.66.0.0/24
+shell_proxmox_guest_gateway: 10.66.0.1
+shell_proxmox_bridge_name: vmbr-shell
+shell_proxmox_bridge_mtu: 1460
+shell_proxmox_volume_group: shell_proxmox
+shell_proxmox_thin_pool: guests
+shell_proxmox_storage_id: shell-proxmox
+shell_proxmox_pool_id: shell-platform
+shell_proxmox_guest_addresses:
+  proxmox-k3s-01: 10.66.0.201/24
+  proxmox-k3s-02: 10.66.0.202/24
+  proxmox-k3s-03: 10.66.0.203/24

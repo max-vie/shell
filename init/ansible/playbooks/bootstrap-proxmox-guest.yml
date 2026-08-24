@@ -1,0 +1,104 @@
+---
+# Guest bootstrap starts after OpenTofu has supplied cloud-init networking. It
+# verifies the Debian baseline and leaves K3s and service roles to later slices.
+- name: Verify one prepared Proxmox guest at a time
+  hosts: proxmox_k3s_servers
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  vars_files:
+    - ../vars/proxmox.yml
+  tasks:
+    - name: Wait for the prepared guest SSH path
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command:
+        argv: [timeout, "300", cloud-init, status, --wait]
+      changed_when: false
+
+    - name: Gather guest facts after cloud-init
+      ansible.builtin.setup:
+
+    - name: Require the expected guest identity
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in shell_proxmox_guest_addresses
+          - ansible_facts.hostname == inventory_hostname
+          - ansible_facts.distribution == "Debian"
+          - ansible_facts.distribution_major_version == "13"
+          - shell_expected_address in ansible_facts.all_ipv4_addresses
+          - >-
+            shell_address_cidr ==
+            shell_proxmox_guest_addresses[inventory_hostname]
+          - shell_address_cidr == shell_expected_address ~ '/24'
+        fail_msg: >-
+          {{ inventory_hostname }} does not match the Debian guest contract.
+
+    - name: Require the persistent INIT account
+      ansible.builtin.command:
+        argv: [id, init]
+      changed_when: false
+
+    - name: Verify passwordless sudo from the INIT account
+      ansible.builtin.command:
+        argv: [sudo, -n, -u, init, sudo, -n, "true"]
+      changed_when: false
+
+    - name: Read the effective SSH policy
+      ansible.builtin.command:
+        argv: [sshd, -T]
+      changed_when: false
+      register: ssh_policy
+
+    - name: Require the key-only SSH baseline
+      ansible.builtin.assert:
+        that:
+          - "'passwordauthentication no' in ssh_policy.stdout_lines"
+          - "'kbdinteractiveauthentication no' in ssh_policy.stdout_lines"
+          - "'permitrootlogin no' in ssh_policy.stdout_lines"
+
+    - name: Read baseline file permissions
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /home/init/.ssh/authorized_keys
+        - /etc/sudoers.d/init
+        - /etc/ssh/ssh_host_ed25519_key
+        - /var/lib/init/image-ready
+      register: baseline_files
+
+    - name: Require private account and host-key files
+      ansible.builtin.assert:
+        that:
+          - baseline_files.results[0].stat.isreg
+          - baseline_files.results[0].stat.pw_name == "init"
+          - baseline_files.results[0].stat.mode == "0600"
+          - baseline_files.results[1].stat.isreg
+          - baseline_files.results[1].stat.pw_name == "root"
+          - baseline_files.results[1].stat.mode == "0440"
+          - baseline_files.results[2].stat.isreg
+          - baseline_files.results[2].stat.mode == "0600"
+          - baseline_files.results[3].stat.isreg
+
+    - name: Read guest service state
+      ansible.builtin.service_facts:
+
+    - name: Require the guest agent and image first-boot service
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_facts.services.get('qemu-guest-agent.service', {}).status
+            == 'enabled'
+          - >-
+            ansible_facts.services.get('qemu-guest-agent.service', {}).state
+            == 'running'
+          - >-
+            ansible_facts.services.get(
+            'init-image-firstboot.service', {}).status == 'enabled'
+          - >-
+            ansible_facts.services.get('init-image-firstboot.service', {}).state
+            == 'running'

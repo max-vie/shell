@@ -1,0 +1,15 @@
+---
+- name: Reconnect to the nested Proxmox host after a network change
+  hosts: proxmox_host
+  gather_facts: false
+  tasks:
+    - name: Wait for the host through the private IAP route
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    - name: Clear the old Ansible connection
+      ansible.builtin.meta: reset_connection
+
+- name: Resume the nested Proxmox host configuration
+  ansible.builtin.import_playbook: configure-proxmox-host.yml
