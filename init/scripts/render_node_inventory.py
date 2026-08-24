@@ -1,9 +1,9 @@
 """Render the private Ansible inventory from the OpenTofu roots.
 
-OpenTofu remains the source of truth for node names, addresses, zones, and VM
-IDs. This adapter validates those facts, derives role and transport labels from
-the owning root, and writes a JSON inventory for Ansible. It does not run
-OpenTofu, read credentials, start guests, or connect to a host.
+OpenTofu remains the source of truth for node names, addresses, zones, GCP
+project IDs, and VM IDs. This adapter validates those facts, derives role and
+transport labels from the owning root, and writes a JSON inventory for Ansible.
+It does not run OpenTofu, read credentials, start guests, or connect to a host.
 """
 
 from __future__ import annotations
@@ -62,6 +62,7 @@ RFC1918_NETWORKS = tuple(
 PROXMOX_GUEST_NETWORK = ipaddress.ip_network("10.66.0.0/24")
 GCP_NODE_NETWORK = ipaddress.ip_network("10.77.0.0/24")
 GCP_ZONE_PATTERN = re.compile(r"^[a-z][a-z0-9-]+[0-9]-[a-z]$")
+GCP_PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 
 
 class InventoryError(ValueError):
@@ -138,6 +139,13 @@ def require_string(value: Any, field: str, node_name: str) -> str:
     return value
 
 
+def gcp_project_id(value: Any, node_name: str) -> str:
+    project_id = require_string(value, "project_id", node_name)
+    if GCP_PROJECT_PATTERN.fullmatch(project_id) is None:
+        raise InventoryError(f"{node_name} has an invalid GCP project_id")
+    return project_id
+
+
 def is_rfc1918(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return isinstance(address, ipaddress.IPv4Address) and any(
         address in network for network in RFC1918_NETWORKS
@@ -203,6 +211,7 @@ def normalize_gcp_nodes(
         if require_string(record.get("name"), "name", name) != name:
             raise InventoryError(f"{name} output name does not match its map key")
         address = private_ipv4(record.get("internal_ip"), "internal_ip", name)
+        project_id = gcp_project_id(record.get("project_id"), name)
         expected_addresses = (
             EXPECTED_SHARED_ADDRESSES
             if cluster == "shared"
@@ -226,6 +235,7 @@ def normalize_gcp_nodes(
                 "cluster": cluster,
                 "transport": "gcp_iap",
                 "gcp_zone": zone,
+                "project_id": project_id,
             }
         )
     return normalized
@@ -287,10 +297,12 @@ def normalize_proxmox_host(value: dict[str, Any]) -> dict[str, str]:
     zone = require_string(value.get("zone"), "zone", name)
     if GCP_ZONE_PATTERN.fullmatch(zone) is None:
         raise InventoryError(f"{name} has an invalid zone: {zone}")
+    project_id = gcp_project_id(value.get("project_id"), name)
     return {
         "name": name,
         "address": address,
         "zone": zone,
+        "project_id": project_id,
     }
 
 
@@ -316,6 +328,14 @@ def inventory(
         "identity_nodes": {},
         "delivery_nodes": {},
     }
+    gcp_project_ids = {
+        node["project_id"] for node in nodes if node["transport"] == "gcp_iap"
+    }
+    if gcp_project_ids != {proxmox_host["project_id"]}:
+        raise InventoryError(
+            "GCP project_id must match across shared, K3s, and Proxmox host outputs"
+        )
+    gcp_project_id = proxmox_host["project_id"]
 
     for node in nodes:
         name = node["name"]
@@ -328,6 +348,7 @@ def inventory(
         }
         if node["transport"] == "gcp_iap":
             hostvars["gcp_zone"] = node["gcp_zone"]
+            hostvars["gcp_project_id"] = gcp_project_id
             group = (
                 "gcp_shared_nodes" if node["cluster"] == "shared" else "gcp_k3s_servers"
             )
@@ -351,6 +372,15 @@ def inventory(
     return {
         "all": {
             "children": {
+                # Direct GCP guests share the IAP transport and Debian baseline;
+                # keep the shared and K3s subgroups available for narrower
+                # playbooks.
+                "gcp_guests": {
+                    "children": {
+                        "gcp_shared_nodes": {},
+                        "gcp_k3s_servers": {},
+                    }
+                },
                 "shell_nodes": {
                     "children": {
                         group: {"hosts": hosts} for group, hosts in group_hosts.items()
@@ -366,6 +396,7 @@ def inventory(
                             "shell_cluster": "proxmox",
                             "shell_transport": "gcp_iap",
                             "gcp_zone": proxmox_host["zone"],
+                            "gcp_project_id": gcp_project_id,
                         }
                     }
                 },

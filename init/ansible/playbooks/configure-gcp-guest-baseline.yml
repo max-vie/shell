@@ -1,0 +1,137 @@
+---
+# Configure the common Debian baseline on direct GCP guests. OS Login and the
+# Google guest environment are prerequisites supplied by the source image;
+# this playbook does not add an unreviewed Google package repository.
+- name: Configure direct GCP Debian guest baseline
+  hosts: gcp_guests
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  vars_files:
+    - ../vars/gcp.yml
+  tasks:
+    - name: Wait for the private IAP SSH route
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    - name: Gather guest facts
+      ansible.builtin.setup:
+
+    - name: Require the direct GCP Debian identity contract
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.hostname == inventory_hostname
+          - ansible_facts.distribution == "Debian"
+          - ansible_facts.distribution_major_version == "13"
+          - >-
+            (ansible_host | default('')) ==
+            (shell_expected_address | default(''))
+          - (shell_transport | default('')) == "gcp_iap"
+          - (ansible_user | default('')) is string
+          - (ansible_user | default('')) | length > 0
+          - (ansible_user | default('')) != "root"
+          - (gcp_project_id | default('')) is string
+          - >-
+            (gcp_project_id | default('')) is
+            match('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')
+          - (gcp_zone | default('')) is string
+          - (gcp_zone | default('')) | length > 0
+          - >-
+            (shell_expected_address | default('')) in
+            ansible_facts.all_ipv4_addresses
+        fail_msg: >-
+          {{ inventory_hostname }} does not match the direct GCP Debian 13
+          OS Login inventory contract.
+
+    - name: Read installed packages before changing the guest
+      ansible.builtin.package_facts:
+        manager: apt
+
+    - name: Require the image-provided GCP guest environment
+      ansible.builtin.assert:
+        that:
+          - "'google-guest-agent' in ansible_facts.packages"
+          - "'google-compute-engine-oslogin' in ansible_facts.packages"
+        fail_msg: >-
+          The source image for {{ inventory_hostname }} must include
+          google-guest-agent and google-compute-engine-oslogin before this
+          baseline can change SSH policy.
+
+    - name: Read the GCP guest service state before changing the guest
+      ansible.builtin.service_facts:
+
+    - name: Require the running GCP guest agent
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_facts.services.get('google-guest-agent.service', {}).get(
+            'status') == 'enabled'
+          - >-
+            ansible_facts.services.get('google-guest-agent.service', {}).get(
+            'state') == 'running'
+        fail_msg: >-
+          google-guest-agent.service must be enabled and running before the
+          direct GCP SSH policy is changed.
+
+    - name: Read the existing OS Login SSH integration
+      ansible.builtin.command:
+        argv: [sshd, -T]
+      changed_when: false
+      register: oslogin_ssh_policy
+
+    - name: Require OS Login authorization before hardening SSH
+      ansible.builtin.assert:
+        that:
+          - "'authorizedkeyscommand' in oslogin_ssh_policy.stdout"
+          - "'google_authorized_keys' in oslogin_ssh_policy.stdout"
+        fail_msg: >-
+          {{ inventory_hostname }} does not expose the Google OS Login SSH
+          authorization command; refusing to remove fallback authentication.
+
+    - name: Install common Debian baseline packages
+      ansible.builtin.apt:
+        name: "{{ shell_gcp_baseline_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Enable and start the Debian SSH service
+      ansible.builtin.systemd_service:
+        name: ssh
+        enabled: true
+        state: started
+
+    - name: Enforce key-only SSH for OS Login users
+      ansible.builtin.copy:
+        dest: "{{ shell_gcp_ssh_policy_path }}"
+        content: |
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PermitRootLogin no
+        owner: root
+        group: root
+        mode: "0644"
+        validate: /usr/sbin/sshd -t -f %s
+
+    - name: Reload SSH after applying the baseline policy
+      ansible.builtin.systemd_service:
+        name: ssh
+        state: reloaded
+      changed_when: false
+
+    - name: Read the effective SSH policy after reload
+      ansible.builtin.command:
+        argv: [sshd, -T]
+      changed_when: false
+      register: ssh_policy
+
+    - name: Require the configured key-only SSH policy
+      ansible.builtin.assert:
+        that:
+          - "'authorizedkeyscommand' in ssh_policy.stdout"
+          - "'google_authorized_keys' in ssh_policy.stdout"
+          - "'passwordauthentication no' in ssh_policy.stdout_lines"
+          - "'kbdinteractiveauthentication no' in ssh_policy.stdout_lines"
+          - "'permitrootlogin no' in ssh_policy.stdout_lines"

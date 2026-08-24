@@ -1,7 +1,8 @@
 project_id = "replace-with-gcp-project-id"
 
-# Keep the pinned Debian image self-link in the ignored local tfvars file.
-source_image = "replace-with-reviewed-debian-image-self-link"
+# Keep the pinned Google-provided Debian 13 image (or reviewed equivalent with
+# the GCP guest environment) in the ignored local tfvars file.
+source_image = "replace-with-reviewed-debian-13-image-self-link"
 
 region = "europe-west4"
 zone   = "europe-west4-a"

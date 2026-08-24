@@ -1,0 +1,10 @@
+---
+# Common direct-GCP guest contract. Google guest-environment packages are
+# image prerequisites; Ansible owns only the ordinary Debian baseline here.
+shell_gcp_baseline_packages:
+  - ca-certificates
+  - curl
+  - openssh-server
+  - python3
+  - sudo
+shell_gcp_ssh_policy_path: /etc/ssh/sshd_config.d/90-shell-gcp-oslogin.conf

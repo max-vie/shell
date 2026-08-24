@@ -15,6 +15,7 @@ output "k3s_nodes" {
       name        = node.name
       zone        = node.zone
       internal_ip = node.internal_ip
+      project_id  = var.project_id
     }
   }
 }

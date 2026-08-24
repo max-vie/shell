@@ -3,8 +3,8 @@ variable "project_id" {
   type        = string
 
   validation {
-    condition     = length(trimspace(var.project_id)) > 0
-    error_message = "project_id must not be empty."
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "project_id must be a valid GCP project ID."
   }
 }
 
@@ -105,7 +105,7 @@ variable "shared_nodes" {
       for node in values(var.shared_nodes) : (
         can(regex("^[a-z][a-z0-9-]+[0-9]-[a-z]$", node.zone)) &&
         length(trimspace(node.machine_type)) > 0 &&
-        can(regex("^https://www[.]googleapis[.]com/compute/v1/projects/.+/global/images/.+$", node.source_image)) &&
+        can(regex("^https://www[.]googleapis[.]com/compute/v1/projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/global/images/[a-z]([-a-z0-9]*[a-z0-9])?$", node.source_image)) &&
         node.boot_disk_size_gb >= 10 && node.boot_disk_size_gb == floor(node.boot_disk_size_gb) &&
         node.data_disk_size_gb > 0 && node.data_disk_size_gb == floor(node.data_disk_size_gb)
       )

@@ -40,11 +40,13 @@ class TestRenderNodeInventory(unittest.TestCase):
                 "name": "identity-01",
                 "zone": "europe-west4-a",
                 "internal_ip": "10.77.0.210",
+                "project_id": "shell-platform",
             },
             "delivery-01": {
                 "name": "delivery-01",
                 "zone": "europe-west4-b",
                 "internal_ip": "10.77.0.211",
+                "project_id": "shell-platform",
             },
         }
 
@@ -54,6 +56,7 @@ class TestRenderNodeInventory(unittest.TestCase):
                 "name": f"gcp-k3s-0{index}",
                 "zone": zone,
                 "internal_ip": f"10.77.0.20{index}",
+                "project_id": "shell-platform",
             }
             for index, zone in enumerate(
                 ("europe-west4-a", "europe-west4-b", "europe-west4-c"),
@@ -77,6 +80,7 @@ class TestRenderNodeInventory(unittest.TestCase):
             "instance_name": "proxmox-host",
             "zone": "europe-west4-a",
             "internal_ip": "10.77.0.220",
+            "project_id": "shell-platform",
         }
 
     def args(
@@ -179,8 +183,13 @@ class TestRenderNodeInventory(unittest.TestCase):
             list(value["all"]["children"]["shell_nodes"]["children"]),
             ["gcp_shared_nodes", "gcp_k3s_servers", "proxmox_k3s_servers"],
         )
+        self.assertEqual(
+            list(value["all"]["children"]["gcp_guests"]["children"]),
+            ["gcp_shared_nodes", "gcp_k3s_servers"],
+        )
         self.assertEqual(hostvars["identity-01"]["shell_role"], "identity")
         self.assertEqual(hostvars["gcp-k3s-01"]["shell_transport"], "gcp_iap")
+        self.assertEqual(hostvars["gcp-k3s-01"]["gcp_project_id"], "shell-platform")
         self.assertEqual(hostvars["proxmox-k3s-01"]["proxmox_vm_id"], 320)
         self.assertEqual(
             value["all"]["children"]["proxmox_host"]["hosts"]["proxmox-host"][
@@ -248,6 +257,17 @@ class TestRenderNodeInventory(unittest.TestCase):
         gcp_k3s = self.gcp_k3s_nodes()
         gcp_k3s["gcp-k3s-01"]["zone"] = "europe-west4-a;invalid"
         with self.assertRaisesRegex(renderer.InventoryError, "invalid zone"):
+            self.build(gcp_k3s=gcp_k3s)
+
+    def test_invalid_or_mismatched_gcp_project_is_rejected(self) -> None:
+        shared = self.shared_nodes()
+        shared["identity-01"]["project_id"] = "invalid project"
+        with self.assertRaisesRegex(renderer.InventoryError, "invalid GCP project_id"):
+            self.build(shared=shared)
+
+        gcp_k3s = self.gcp_k3s_nodes()
+        gcp_k3s["gcp-k3s-01"]["project_id"] = "other-platform"
+        with self.assertRaisesRegex(renderer.InventoryError, "GCP project_id"):
             self.build(gcp_k3s=gcp_k3s)
 
     def test_empty_node_map_is_rejected(self) -> None:
@@ -402,6 +422,20 @@ class TestRenderNodeInventory(unittest.TestCase):
             )
             inventory = json.loads(completed.stdout)
             self.assertEqual(len(inventory["_meta"]["hostvars"]), 9)
+            self.assertEqual(
+                {
+                    host
+                    for child in inventory["gcp_guests"]["children"]
+                    for host in inventory[child]["hosts"]
+                },
+                {
+                    "identity-01",
+                    "delivery-01",
+                    "gcp-k3s-01",
+                    "gcp-k3s-02",
+                    "gcp-k3s-03",
+                },
+            )
             self.assertIn("proxmox_k3s_servers", inventory)
 
     def test_atomic_output_is_private_and_symlinks_are_rejected(self) -> None:

@@ -20,9 +20,9 @@ resource "google_compute_disk" "data" {
   }
 }
 
-# No service_account block is declared here. The VM needs a dedicated,
-# least-privilege identity only when software inside the guest calls GCP APIs;
-# OpenTofu authentication through ADC is a separate concern.
+# No service_account block is declared here, so the provider sends no runtime
+# service account. If guest software later calls GCP APIs, SUDO must supply a
+# dedicated identity and narrow IAM contract; OpenTofu ADC is separate.
 resource "google_compute_instance" "node" {
   #checkov:skip=CKV_GCP_36:Packet forwarding is an explicit opt-in for K3s routing nodes.
   #checkov:skip=CKV_GCP_38:Google-managed encryption remains until SUDO owns a KMS key contract.

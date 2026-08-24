@@ -28,6 +28,11 @@ output "region" {
   value       = google_compute_subnetwork.shared.region
 }
 
+output "project_id" {
+  description = "The authoritative GCP project for the shared platform."
+  value       = var.project_id
+}
+
 output "shared_nodes" {
   description = "Shared platform node names and private addresses."
   value = {
@@ -35,6 +40,7 @@ output "shared_nodes" {
       name        = node.name
       zone        = node.zone
       internal_ip = node.internal_ip
+      project_id  = var.project_id
     }
   }
 }

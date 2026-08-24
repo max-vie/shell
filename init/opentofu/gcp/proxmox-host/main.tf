@@ -49,6 +49,8 @@ resource "google_compute_disk" "data" {
   }
 }
 
+# No runtime service account is attached. Add a SUDO-owned, least-privilege
+# identity only when software inside this host needs to call GCP APIs.
 resource "google_compute_instance" "proxmox_host" {
   #checkov:skip=CKV_GCP_36:The nested guest NAT requires forwarding on the outer host.
   #checkov:skip=CKV_GCP_38:Google-managed encryption remains until SUDO owns a KMS key contract.

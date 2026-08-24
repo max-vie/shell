@@ -3,8 +3,8 @@ variable "project_id" {
   type        = string
 
   validation {
-    condition     = length(trimspace(var.project_id)) > 0
-    error_message = "project_id must not be empty."
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "project_id must be a valid GCP project ID."
   }
 }
 
@@ -74,7 +74,7 @@ variable "source_image" {
 
   validation {
     condition = can(regex(
-      "^https://www[.]googleapis[.]com/compute/v1/projects/.+/global/images/.+$",
+      "^https://www[.]googleapis[.]com/compute/v1/projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/global/images/[a-z]([-a-z0-9]*[a-z0-9])?$",
       var.source_image,
     ))
     error_message = "source_image must be a full pinned GCP image self-link."

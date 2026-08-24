@@ -5,7 +5,9 @@ k3s_nodes = {
     zone              = "europe-west4-a"
     address           = "10.77.0.201"
     machine_type      = "n2-standard-4"
-    source_image      = "replace-with-reviewed-k3s-image-self-link"
+    # Pin a Google-provided Debian 13 image (or reviewed equivalent) that
+    # includes the GCP guest environment and OS Login support.
+    source_image      = "replace-with-reviewed-debian-13-image-self-link"
     boot_disk_size_gb = 32
     data_disk_size_gb = 100
   }
@@ -14,7 +16,7 @@ k3s_nodes = {
     zone              = "europe-west4-b"
     address           = "10.77.0.202"
     machine_type      = "n2-standard-4"
-    source_image      = "replace-with-reviewed-k3s-image-self-link"
+    source_image      = "replace-with-reviewed-debian-13-image-self-link"
     boot_disk_size_gb = 32
     data_disk_size_gb = 100
   }
@@ -23,7 +25,7 @@ k3s_nodes = {
     zone              = "europe-west4-c"
     address           = "10.77.0.203"
     machine_type      = "n2-standard-4"
-    source_image      = "replace-with-reviewed-k3s-image-self-link"
+    source_image      = "replace-with-reviewed-debian-13-image-self-link"
     boot_disk_size_gb = 32
     data_disk_size_gb = 100
   }

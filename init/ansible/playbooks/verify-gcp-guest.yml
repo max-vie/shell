@@ -1,0 +1,110 @@
+---
+# Read-only proof for the direct GCP Debian guest baseline. It verifies the
+# image-provided OS Login environment and the Ansible-managed common baseline.
+- name: Verify direct GCP Debian guest baseline
+  hosts: gcp_guests
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  vars_files:
+    - ../vars/gcp.yml
+  tasks:
+    - name: Wait for the private IAP SSH route
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    - name: Gather guest facts
+      ansible.builtin.setup:
+
+    - name: Require the direct GCP Debian identity contract
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.hostname == inventory_hostname
+          - ansible_facts.distribution == "Debian"
+          - ansible_facts.distribution_major_version == "13"
+          - >-
+            (ansible_host | default('')) ==
+            (shell_expected_address | default(''))
+          - (shell_transport | default('')) == "gcp_iap"
+          - (ansible_user | default('')) is string
+          - (ansible_user | default('')) | length > 0
+          - (ansible_user | default('')) != "root"
+          - (gcp_project_id | default('')) is string
+          - >-
+            (gcp_project_id | default('')) is
+            match('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')
+          - (gcp_zone | default('')) is string
+          - (gcp_zone | default('')) | length > 0
+          - >-
+            (shell_expected_address | default('')) in
+            ansible_facts.all_ipv4_addresses
+        fail_msg: >-
+          {{ inventory_hostname }} does not match the direct GCP Debian 13
+          OS Login inventory contract.
+
+    - name: Read installed package facts
+      ansible.builtin.package_facts:
+        manager: apt
+
+    - name: Require the Debian baseline package contract
+      ansible.builtin.assert:
+        that:
+          - item in ansible_facts.packages
+        fail_msg: "{{ item }} is missing from {{ inventory_hostname }}."
+      loop: "{{ shell_gcp_baseline_packages }}"
+
+    - name: Require the GCP guest package contract
+      ansible.builtin.assert:
+        that:
+          - item in ansible_facts.packages
+        fail_msg: "{{ item }} is missing from {{ inventory_hostname }}."
+      loop:
+        - google-guest-agent
+        - google-compute-engine-oslogin
+
+    - name: Read guest service facts
+      ansible.builtin.service_facts:
+
+    - name: Require the enabled running guest services
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_facts.services.get('google-guest-agent.service', {}).get(
+            'status') == 'enabled'
+          - >-
+            ansible_facts.services.get('google-guest-agent.service', {}).get(
+            'state') == 'running'
+          - >-
+            ansible_facts.services.get('ssh.service', {}).get('status') ==
+            'enabled'
+          - >-
+            ansible_facts.services.get('ssh.service', {}).get('state') ==
+            'running'
+        fail_msg: >-
+          The GCP guest agent and SSH service must be enabled and running on
+          {{ inventory_hostname }}.
+
+    - name: Read the effective SSH policy
+      ansible.builtin.command:
+        argv: [sshd, -T]
+      changed_when: false
+      register: ssh_policy
+
+    - name: Read the managed SSH policy file
+      ansible.builtin.stat:
+        path: "{{ shell_gcp_ssh_policy_path }}"
+      register: ssh_policy_file
+
+    - name: Require the key-only OS Login SSH baseline
+      ansible.builtin.assert:
+        that:
+          - ssh_policy_file.stat.isreg
+          - ssh_policy_file.stat.pw_name == "root"
+          - ssh_policy_file.stat.mode == "0644"
+          - "'authorizedkeyscommand' in ssh_policy.stdout"
+          - "'google_authorized_keys' in ssh_policy.stdout"
+          - "'passwordauthentication no' in ssh_policy.stdout_lines"
+          - "'kbdinteractiveauthentication no' in ssh_policy.stdout_lines"
+          - "'permitrootlogin no' in ssh_policy.stdout_lines"

@@ -29,5 +29,6 @@ output "proxmox_host" {
     instance_name = google_compute_instance.proxmox_host.name
     zone          = google_compute_instance.proxmox_host.zone
     internal_ip   = google_compute_address.host.address
+    project_id    = var.project_id
   }
 }
