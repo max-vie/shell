@@ -1,0 +1,35 @@
+# The endpoint and token are supplied through the private process environment:
+# PROXMOX_VE_ENDPOINT and PROXMOX_VE_API_TOKEN.
+
+pve_node_name = "replace-with-proxmox-node"
+pool_id       = "replace-with-proxmox-pool"
+template_vm_id = 9000
+datastore_id  = "replace-with-proxmox-datastore"
+bridge_name   = "replace-with-proxmox-bridge"
+
+guest_gateway     = "replace-with-guest-gateway"
+guest_dns_servers = ["replace-with-guest-dns"]
+start_guests      = false
+
+k3s_nodes = {
+  proxmox-k3s-01 = {
+    vm_id      = 320
+    address    = "replace-with-private-address/24"
+    cpu_cores  = 4
+    memory_mib = 8192
+  }
+
+  proxmox-k3s-02 = {
+    vm_id      = 321
+    address    = "replace-with-private-address/24"
+    cpu_cores  = 4
+    memory_mib = 8192
+  }
+
+  proxmox-k3s-03 = {
+    vm_id      = 322
+    address    = "replace-with-private-address/24"
+    cpu_cores  = 4
+    memory_mib = 8192
+  }
+}

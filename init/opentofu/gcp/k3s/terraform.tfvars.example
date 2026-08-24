@@ -1,0 +1,30 @@
+project_id = "replace-with-gcp-project-id"
+
+k3s_nodes = {
+  gcp-k3s-01 = {
+    zone              = "europe-west4-a"
+    address           = "10.77.0.201"
+    machine_type      = "n2-standard-4"
+    source_image      = "replace-with-reviewed-k3s-image-self-link"
+    boot_disk_size_gb = 32
+    data_disk_size_gb = 100
+  }
+
+  gcp-k3s-02 = {
+    zone              = "europe-west4-b"
+    address           = "10.77.0.202"
+    machine_type      = "n2-standard-4"
+    source_image      = "replace-with-reviewed-k3s-image-self-link"
+    boot_disk_size_gb = 32
+    data_disk_size_gb = 100
+  }
+
+  gcp-k3s-03 = {
+    zone              = "europe-west4-c"
+    address           = "10.77.0.203"
+    machine_type      = "n2-standard-4"
+    source_image      = "replace-with-reviewed-k3s-image-self-link"
+    boot_disk_size_gb = 32
+    data_disk_size_gb = 100
+  }
+}

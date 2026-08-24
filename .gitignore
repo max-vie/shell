@@ -22,6 +22,17 @@ __pycache__/
 *.tfstate
 *.tfstate.*
 *.tfplan
+*.plan
+plan.out
 *.tfvars
+*.tfvars.json
 !*.tfvars.example
+*.tfbackend
+*.backend.hcl
 **/crash.log
+**/crash.*.log
+
+# Cloud credential exports must remain outside the checkout.
+**/application-default-credentials.json
+**/service-account*.json
+**/*-credentials.json

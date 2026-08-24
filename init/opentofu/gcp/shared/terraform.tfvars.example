@@ -1,0 +1,21 @@
+project_id = "replace-with-gcp-project-id"
+
+shared_nodes = {
+  identity-01 = {
+    zone              = "europe-west4-a"
+    address           = "10.77.0.210"
+    machine_type      = "e2-standard-2"
+    source_image      = "replace-with-reviewed-identity-image-self-link"
+    boot_disk_size_gb = 32
+    data_disk_size_gb = 50
+  }
+
+  delivery-01 = {
+    zone              = "europe-west4-b"
+    address           = "10.77.0.211"
+    machine_type      = "e2-standard-2"
+    source_image      = "replace-with-reviewed-delivery-image-self-link"
+    boot_disk_size_gb = 32
+    data_disk_size_gb = 100
+  }
+}
