@@ -1,0 +1,27 @@
+# Local agent material.
+/.agents/skills/
+/.codex/
+/.opencode/
+/AGENTS.md
+/opencode.json
+/skills-lock.json
+
+# Private local state and notes.
+/.local/
+
+# Python caches and environments.
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OpenTofu state and generated working files.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+**/crash.log
