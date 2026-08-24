@@ -1,0 +1,41 @@
+---
+# Read-only guest verification. It checks the inventory contract without
+# changing users, packages, or networking. Transport details remain in the
+# private inventory.
+- name: Verify SHELL node identity and address
+  hosts: shell_nodes
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    ipv4_octet_pattern: '(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
+  tasks:
+    - name: Require the inventory address contract
+      ansible.builtin.assert:
+        that:
+          - ansible_host is defined
+          - shell_expected_address is defined
+          - >-
+            shell_expected_address is match(
+            '^(?:' ~ ipv4_octet_pattern ~ '\\.){3}' ~
+            ipv4_octet_pattern ~ '$'
+            )
+        fail_msg: >-
+          {{ inventory_hostname }} needs ansible_host and a valid
+          shell_expected_address in the private inventory.
+
+    - name: Verify the guest hostname
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.hostname == inventory_hostname
+        fail_msg: >-
+          Expected hostname {{ inventory_hostname }}, found
+          {{ ansible_facts.hostname }}.
+
+    - name: Verify the expected private address
+      ansible.builtin.assert:
+        that:
+          - shell_expected_address in ansible_facts.all_ipv4_addresses
+        fail_msg: >-
+          Expected {{ shell_expected_address }} on {{ inventory_hostname }};
+          found {{ ansible_facts.all_ipv4_addresses }}.
