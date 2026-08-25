@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "freeipa-host-profile",
+  "description": "Source-only SUDO policy for the shared FreeIPA identity and internal DNS host.",
+  "policy_owner": "sudo",
+  "consumer_owners": ["init"],
+  "proof_status": "source-only",
+  "platform_scope": "shared",
+  "placement": "gcp",
+  "served_clusters": ["gcp", "proxmox"],
+  "inventory_group": "identity_nodes",
+  "host": {
+    "name": "identity-01",
+    "ip_address": "10.77.0.210"
+  },
+  "identity": {
+    "authority": "freeipa",
+    "roles": ["identity", "internal-dns"],
+    "groups": ["platform-admins", "platform-operators", "auditors"],
+    "identity_model": "sudo/access/identity-model.json"
+  },
+  "network": {
+    "tcp_ports": [53, 80, 88, 389, 443, 464, 636],
+    "udp_ports": [53, 88, 464]
+  },
+  "private_custody": {
+    "root": ".local/sudo/identity",
+    "tracked": false,
+    "directory_mode": "0700",
+    "file_mode": "0600",
+    "secret_store": "undecided"
+  },
+  "required_contracts": {
+    "identity_configuration": {
+      "owner": "sudo",
+      "status": "not-defined",
+      "required_fields": ["dns_domain", "kerberos_realm", "dns_forwarders"]
+    },
+    "identity_credentials": {
+      "owner": "sudo",
+      "status": "not-defined",
+      "required_keys": ["directory_manager_password", "admin_password"]
+    },
+    "operating_system": {
+      "owner": "init",
+      "decision_owner": "man",
+      "status": "not-defined"
+    },
+    "artifact_supply": {
+      "owner": "tar",
+      "status": "not-defined"
+    }
+  }
+}

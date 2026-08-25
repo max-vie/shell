@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "identity-model",
+  "description": "Source-only default-deny identity groups for INIT and MAKE consumers.",
+  "policy_owner": "sudo",
+  "consumer_owners": ["init", "make"],
+  "proof_status": "source-only",
+  "identity_authority": "freeipa",
+  "cluster_scope": ["gcp", "proxmox"],
+  "groups": {
+    "platform-admins": {
+      "access_level": "admin"
+    },
+    "platform-operators": {
+      "access_level": "operate"
+    },
+    "auditors": {
+      "access_level": "read-only"
+    }
+  },
+  "default_access": "deny",
+  "implementation": {
+    "init": "host-and-directory-groups",
+    "make": "workload-authorization",
+    "status": "not-defined"
+  }
+}

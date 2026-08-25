@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "kubernetes-ecosystem-profile",
+  "description": "Source-only SUDO identity policy for future MAKE workloads in both K3s clusters.",
+  "policy_owner": "sudo",
+  "consumer_owners": ["make"],
+  "proof_status": "source-only",
+  "cluster_scope": ["gcp", "proxmox"],
+  "identity": {
+    "authority": "freeipa",
+    "identity_host_profile": "sudo/access/freeipa-host-profile.json",
+    "identity_model": "sudo/access/identity-model.json",
+    "required_groups": ["platform-admins", "platform-operators", "auditors"]
+  },
+  "required_contracts": {
+    "authentication_integration": {
+      "owner": "make",
+      "status": "not-defined"
+    },
+    "workload_authorization": {
+      "owner": "make",
+      "policy_owner": "sudo",
+      "status": "not-defined"
+    },
+    "service_endpoints": {
+      "owner": "make",
+      "status": "not-defined"
+    }
+  }
+}

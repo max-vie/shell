@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "delivery-host-profile",
+  "description": "Source-only SUDO trust boundary for the shared delivery host.",
+  "policy_owner": "sudo",
+  "consumer_owners": ["init", "make"],
+  "proof_status": "source-only",
+  "platform_scope": "shared",
+  "placement": "gcp",
+  "served_clusters": ["gcp", "proxmox"],
+  "inventory_group": "delivery_nodes",
+  "host": {
+    "name": "delivery-01",
+    "ip_address": "10.77.0.211",
+    "operating_system": "debian-13",
+    "intended_roles": ["forgejo", "rootless-runner"]
+  },
+  "trust": {
+    "identity_host_profile": "sudo/access/freeipa-host-profile.json",
+    "identity_model": "sudo/access/identity-model.json"
+  },
+  "required_contracts": {
+    "workload_configuration": {
+      "owner": "make",
+      "status": "not-defined"
+    },
+    "service_endpoints": {
+      "owner": "make",
+      "status": "not-defined"
+    },
+    "delivery_credentials": {
+      "owner": "sudo",
+      "status": "not-defined"
+    }
+  }
+}
