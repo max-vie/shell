@@ -7,7 +7,8 @@ private rendered inventory groups `gcp_k3s_servers` and
 
 ## Private inputs
 
-The runtime playbooks require these values from private SUDO/TAR handoffs:
+The runtime playbooks require values from separate private SUDO, TAR, and INIT
+handoffs:
 
 - `shell_k3s_cluster_name`: `gcp` or `proxmox`.
 - `shell_k3s_target_group`: one rendered cluster group only.
@@ -16,12 +17,16 @@ The runtime playbooks require these values from private SUDO/TAR handoffs:
 - `shell_k3s_version`: the pinned K3s version reported by the binary.
 - `shell_k3s_binary_path` and `shell_k3s_binary_sha256`: the private TAR
   artifact and its lowercase SHA-256 digest.
-- `shell_k3s_token_path`: a private SUDO/TAR token-file path.
+- `shell_k3s_token_path`: a private SUDO server-token file path.
 - `shell_k3s_pod_cidr` and `shell_k3s_service_cidr`: distinct cluster ranges.
-- Proxmox uses API VIP `10.66.0.200`, a private guest interface, and a
-  private TAR Kube-VIP image digest.
+- Proxmox uses API VIP `10.66.0.200`, a private INIT guest-interface input,
+  and a private TAR Kube-VIP image digest.
 
-The token is sensitive runtime material. Its handling rules live in the
+SUDO supplies one separate short server token for each cluster at private
+ignored paths. The first server uses the short form because its self-signed
+certificate authority does not exist until startup. K3s later writes secure
+token material that must remain protected and be backed up with the matching
+datastore. Its handling rules live in the
 [`runtime.md`](runtime.md) guide. The input file and generated kubeconfig
 remain under private ignored state described in that guide.
 

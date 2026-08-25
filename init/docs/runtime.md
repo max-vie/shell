@@ -40,7 +40,7 @@ readiness, and K3s API health need separate approved execution and evidence.
 | Google application credentials | SUDO and the execution environment | OpenTofu Google provider | Outside the checkout, through application default credentials or workload identity federation |
 | Proxmox API token | SUDO | OpenTofu Proxmox provider | Private process environment or wrapper |
 | SSH agent and key material | SUDO and the execution environment | OpenTofu image upload and Ansible | SSH agent or private files outside Git |
-| K3s join token | SUDO/TAR | INIT K3s playbooks | Private token-file path supplied at runtime |
+| K3s server token | SUDO | INIT K3s playbooks | Private token-file path supplied at runtime |
 | Administrator kubeconfig | INIT | Later cluster consumers | Ignored `.local/ansible/kubeconfig/` state, mode `0600` |
 
 Keep credentials, private keys, token values, kubeconfigs, state, plans, and
@@ -56,11 +56,14 @@ privilege-separated `root@pam` token limited to the INIT pool, image and guest
 datastores, bridge, and declared VM IDs. INIT leaves creation of this identity,
 token, and access-control tree to SUDO.
 
-The K3s configuration playbook reads the join token from the private
-SUDO/TAR-provided path, trims the source value, and writes one trailing
-newline to the guest token file with mode `0600`. It renders the K3s
-configuration with mode `0600` and exports the administrator kubeconfig to
-ignored local state. The complete K3s contract lives in
+The K3s configuration playbook reads the server token from the private
+SUDO-provided path, trims the source value, and writes one trailing newline
+to the guest token file with mode `0600`. The first server uses the short
+server-token form because a self-signed certificate-authority hash does not
+exist before startup. K3s later writes secure token material that must remain
+protected and be backed up with the matching datastore. The playbook renders
+the K3s configuration with mode `0600` and exports the administrator kubeconfig
+to ignored local state. The complete K3s contract lives in
 [`k3s-runtime.md`](k3s-runtime.md).
 
 ### OpenBao transition
@@ -88,7 +91,10 @@ and read-only retrieval path have source and live evidence.
 Keep state, plans, provider caches, private SSH configuration, runtime inputs,
 and generated inventory under private ignored state. Use mode `0700` for
 directories, mode `0600` for sensitive files, mode `0644` for public files,
-and `umask 077` for private handoffs. Remove temporary plans, credentials,
-image staging files, and tunnel state when the owning process exits. Local
-state proves that a handoff was written; provider access, guest startup,
-network reachability, K3s quorum, and recovery need separate evidence.
+and `umask 077` for private handoffs. The SUDO token generator requires the
+existing `.local` root to already be `0700` and refuses to repair it — set it
+once with `chmod 0700 .local` before the first `--generate`. Remove temporary
+plans, credentials, image staging files, and tunnel state when the owning
+process exits. Local state proves that a handoff was written; provider access,
+guest startup, network reachability, K3s quorum, and recovery need separate
+evidence.
