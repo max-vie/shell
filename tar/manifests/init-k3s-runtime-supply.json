@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "init-k3s-runtime-supply",
+  "policy_owner": "tar",
+  "execution_owner": "init",
+  "proof_status": "source-reference-only",
+  "k3s_binary": {
+    "version": "v1.34.10+k3s1",
+    "file_name": "k3s",
+    "source": "https://github.com/k3s-io/k3s/releases/download/v1.34.10%2Bk3s1/k3s",
+    "sha256": "e63a3511b2603fd1436a1ea8d228348a3b47334b45024801d41a8c0e2d22e8c4",
+    "size": 80879800
+  },
+  "kube_vip_image": {
+    "repository": "ghcr.io/kube-vip/kube-vip",
+    "tag": "v1.0.4",
+    "platform": "linux/amd64",
+    "digest": "sha256:742d6713401a1238043319c76aceba174556301153bdd61b60bdfa1fe3907ed7"
+  }
+}
