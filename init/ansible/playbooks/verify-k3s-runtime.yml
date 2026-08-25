@@ -1,0 +1,130 @@
+---
+# Read-only K3s foundation verification. Run it against one cluster group at
+# a time; it does not inspect or change workloads owned by MAKE.
+- name: Verify each K3s server runtime
+  hosts: "{{ shell_k3s_target_group | default('gcp_k3s_servers') }}"
+  serial: 1
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  vars_files:
+    - ../vars/k3s.yml
+  tasks:
+    - name: Require the selected K3s cluster contract
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_cluster_name is defined
+          - shell_k3s_target_group in groups
+          - groups[shell_k3s_target_group] | length == 3
+          - shell_k3s_api_endpoint is defined
+          - shell_k3s_api_endpoint is match('^https://[A-Za-z0-9.-]+:6443$')
+          - shell_k3s_api_host is defined
+          - shell_k3s_version is defined
+        fail_msg: The selected K3s verification contract is incomplete.
+
+    - name: Wait for the selected K3s guests
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    - name: Gather K3s server service facts
+      ansible.builtin.service_facts:
+
+    - name: Inspect private K3s runtime files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ shell_k3s_binary_dest }}"
+        - "{{ shell_k3s_config_dir }}/config.yaml"
+        - "{{ shell_k3s_token_dest }}"
+        - "{{ shell_k3s_config_dir }}/k3s.yaml"
+        - "{{ shell_k3s_data_dir }}/server/db/etcd/member"
+      register: shell_k3s_runtime_files
+
+    - name: Require the server runtime and embedded etcd member
+      ansible.builtin.assert:
+        that:
+          - >-
+            ansible_facts.services.get(shell_k3s_service_name ~ '.service',
+            {}).state == 'running'
+          - >-
+            ansible_facts.services.get(shell_k3s_service_name ~ '.service',
+            {}).status == 'enabled'
+          - shell_k3s_runtime_files.results[0].stat.isreg
+          - shell_k3s_runtime_files.results[0].stat.mode == '0755'
+          - shell_k3s_runtime_files.results[1].stat.isreg
+          - shell_k3s_runtime_files.results[1].stat.mode == '0600'
+          - shell_k3s_runtime_files.results[2].stat.isreg
+          - shell_k3s_runtime_files.results[2].stat.mode == '0600'
+          - shell_k3s_runtime_files.results[3].stat.isreg
+          - shell_k3s_runtime_files.results[3].stat.mode == '0600'
+          - shell_k3s_runtime_files.results[4].stat.isdir
+        fail_msg: >-
+          {{ inventory_hostname }} does not meet the private K3s service,
+          configuration, token, kubeconfig, or embedded-etcd contract.
+
+- name: Verify the K3s cluster endpoint and node set
+  hosts: "{{ shell_k3s_target_group | default('gcp_k3s_servers') }}"
+  gather_facts: false
+  become: true
+  vars_files:
+    - ../vars/k3s.yml
+  tasks:
+    - name: Wait for every declared K3s node to become Ready
+      ansible.builtin.command:
+        argv:
+          - "{{ shell_k3s_binary_dest }}"
+          - kubectl
+          - wait
+          - --for=condition=Ready
+          - nodes
+          - --all
+          - --timeout=180s
+      changed_when: false
+      run_once: true
+
+    - name: Read the K3s node set and versions
+      ansible.builtin.command:
+        argv: ["{{ shell_k3s_binary_dest }}", kubectl, get, nodes, -o, json]
+      changed_when: false
+      register: shell_k3s_nodes
+      run_once: true
+
+    - name: Derive the observed K3s node names and versions
+      ansible.builtin.set_fact:
+        shell_k3s_observed_nodes: >-
+          {{ (shell_k3s_nodes.stdout | from_json).items |
+             map(attribute='metadata.name') | list }}
+        shell_k3s_observed_versions: >-
+          {{ (shell_k3s_nodes.stdout | from_json).items |
+             map(attribute='status.nodeInfo.kubeletVersion') | list }}
+      run_once: true
+
+    - name: Require the exact Ready K3s node set and version
+      ansible.builtin.assert:
+        that:
+          - >-
+            shell_k3s_observed_nodes | sort ==
+            groups[shell_k3s_target_group] | sort
+          - shell_k3s_observed_versions | length == 3
+          - >-
+            shell_k3s_observed_versions | select('search', shell_k3s_version) |
+            list | length == 3
+        fail_msg: >-
+          The live K3s node set or version does not match the private contract.
+      run_once: true
+
+    - name: Verify the stable K3s API endpoint
+      ansible.builtin.command:
+        argv:
+          - "{{ shell_k3s_binary_dest }}"
+          - kubectl
+          - --kubeconfig={{ shell_k3s_config_dir }}/k3s.yaml
+          - "--server={{ shell_k3s_api_endpoint }}"
+          - "--tls-server-name={{ shell_k3s_api_host }}"
+          - get
+          - --raw=/readyz
+      changed_when: false
+      register: shell_k3s_endpoint_ready
+      failed_when: shell_k3s_endpoint_ready.stdout | trim != 'ok'
+      run_once: true

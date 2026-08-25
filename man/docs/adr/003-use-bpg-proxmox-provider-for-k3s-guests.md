@@ -32,7 +32,8 @@ INIT gains a repeatable guest plan but depends on a reachable Proxmox API, a
 prepared Debian image, and valid private inputs. The lockfile pins the provider.
 Disabling automatic cloud-init package upgrades currently requires a
 privilege-separated `root@pam` token with ACLs limited to the INIT resources;
-the runtime secret note records this provider limitation.
+[`init/docs/runtime.md`](../../../init/docs/runtime.md) records
+this provider limitation.
 The root proves guest configuration only; K3s readiness, etcd quorum, network
 reachability, and recovery remain separate verification work.
 

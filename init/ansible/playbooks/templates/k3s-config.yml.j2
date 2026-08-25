@@ -1,0 +1,24 @@
+# The first server initializes embedded etcd. Later servers join through the
+# cluster endpoint supplied by the private runtime contract.
+token-file: "{{ shell_k3s_token_dest }}"
+{% if inventory_hostname == groups[shell_k3s_target_group][0] -%}
+cluster-init: true
+{% else -%}
+server: "{{ shell_k3s_api_endpoint }}"
+{% endif -%}
+data-dir: "{{ shell_k3s_data_dir }}"
+tls-san:
+  - "{{ shell_k3s_api_host }}"
+cluster-domain: "{{ shell_k3s_cluster_domain }}"
+cluster-cidr: "{{ shell_k3s_pod_cidr }}"
+service-cidr: "{{ shell_k3s_service_cidr }}"
+flannel-backend: "{{ shell_k3s_flannel_backend }}"
+disable-network-policy: {{ shell_k3s_disable_network_policy | bool | to_json }}
+disable-kube-proxy: {{ shell_k3s_disable_kube_proxy | bool | to_json }}
+disable:
+{% for component in shell_k3s_disabled_components -%}
+  - "{{ component }}"
+{% endfor -%}
+secrets-encryption: true
+write-kubeconfig-mode: "0600"
+node-name: "{{ inventory_hostname }}"

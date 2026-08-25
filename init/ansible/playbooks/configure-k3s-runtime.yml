@@ -1,0 +1,411 @@
+---
+# Configure the K3s foundation for one existing cluster group at a time.
+# Supply shell_k3s_target_group as either gcp_k3s_servers or
+# proxmox_k3s_servers. Tokens and artifact paths remain private inputs.
+- name: Configure the K3s server runtime
+  hosts: "{{ shell_k3s_target_group | default('gcp_k3s_servers') }}"
+  serial: 1
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  vars_files:
+    - ../vars/k3s.yml
+  pre_tasks:
+    - name: Require the selected K3s cluster contract
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_cluster_name is defined
+          - shell_k3s_cluster_name is string
+          - shell_k3s_cluster_name | length > 0
+          - shell_k3s_target_group in groups
+          - groups[shell_k3s_target_group] | length == 3
+          - shell_k3s_api_endpoint is defined
+          - >-
+            shell_k3s_api_endpoint is
+            match('^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?:6443$')
+          - shell_k3s_api_host is defined
+          - >-
+            shell_k3s_api_host is
+            match('^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$')
+          - shell_k3s_version is defined
+          - >-
+            shell_k3s_version is
+            match('^v[0-9]+[.][0-9]+[.][0-9]+(\\+[A-Za-z0-9.-]+)?$')
+          - shell_k3s_binary_path is defined
+          - shell_k3s_binary_path is match('^/')
+          - shell_k3s_binary_sha256 is defined
+          - shell_k3s_binary_sha256 is match('^[0-9a-f]{64}$')
+          - shell_k3s_token_path is defined
+          - shell_k3s_token_path is match('^/')
+          - shell_k3s_pod_cidr is defined
+          - shell_k3s_pod_cidr | ansible.utils.ipaddr('prefix')
+          - shell_k3s_service_cidr is defined
+          - shell_k3s_service_cidr | ansible.utils.ipaddr('prefix')
+          - shell_k3s_pod_cidr != shell_k3s_service_cidr
+        fail_msg: >-
+          The selected cluster needs a private endpoint, version, TAR binary
+          handoff, SUDO token handoff, and distinct pod/service CIDRs.
+
+    - name: Stop before K3s mutation in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Require exactly three K3s inventory hosts
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in groups[shell_k3s_target_group]
+          - shell_role | default('') == 'k3s'
+          - ansible_host == shell_expected_address
+        fail_msg: >-
+          {{ inventory_hostname }} does not match the rendered K3s inventory
+          contract for {{ shell_k3s_target_group }}.
+
+    - name: Wait for the selected K3s guests
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    # Read the private token once, on the first host of the cluster group, and
+    # reference it through hostvars from the other hosts. The value remains in
+    # memory for this play and is not written to persistent fact cache.
+    - name: Load the private SUDO K3s token on the first cluster server
+      ansible.builtin.set_fact:
+        shell_k3s_join_material: >-
+          {{ lookup('ansible.builtin.file', shell_k3s_token_path) | trim }}
+      no_log: true
+      when: inventory_hostname == groups[shell_k3s_target_group][0]
+
+    - name: Require a private K3s token on the first cluster server
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_join_material is string
+          - shell_k3s_join_material | length >= 32
+        fail_msg: >-
+          The private K3s token handoff must contain at least 32 characters.
+      no_log: true
+      when: inventory_hostname == groups[shell_k3s_target_group][0]
+
+    - name: Set the shared K3s token reference for the joiners
+      ansible.builtin.set_fact:
+        shell_k3s_join_material: >-
+          {{ hostvars[groups[shell_k3s_target_group][0]]
+             ['shell_k3s_join_material'] }}
+      no_log: true
+      when: inventory_hostname != groups[shell_k3s_target_group][0]
+
+  tasks:
+    - name: Gather K3s guest facts
+      ansible.builtin.setup:
+
+    - name: Require the Debian 13 K3s guest contract
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == "Debian"
+          - ansible_facts.distribution_major_version == "13"
+          - shell_expected_address in ansible_facts.all_ipv4_addresses
+        fail_msg: >-
+          {{ inventory_hostname }} must be a Debian 13 guest with its declared
+          private address before K3s configuration.
+
+    # Inspect the private TAR K3s binary handoff on the controller, as the
+    # operator's non-root user, before any guest mutation.
+    - name: Inspect the private TAR K3s binary handoff
+      ansible.builtin.stat:
+        path: "{{ shell_k3s_binary_path }}"
+        checksum_algorithm: sha256
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: shell_k3s_binary
+
+    - name: Require the exact private K3s binary
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_binary.stat.isreg
+          - not shell_k3s_binary.stat.islnk
+          - shell_k3s_binary.stat.checksum == shell_k3s_binary_sha256
+        fail_msg: >-
+          The private TAR K3s binary does not match its declared SHA-256.
+      run_once: true
+
+    - name: Apply the K3s baseline, install, and service start
+      block:
+        - name: Baselining guest state for rescue
+          block:
+            - name: Capture the guest fstab before mutation
+              ansible.builtin.slurp:
+                path: /etc/fstab
+              register: shell_k3s_fstab_baseline
+
+            - name: Record whether the K3s service existed before this run
+              ansible.builtin.stat:
+                path: /etc/systemd/system/k3s.service
+              register: shell_k3s_unit_baseline
+          rescue:
+            - name: Report the guest-state baseline failure
+              ansible.builtin.fail:
+                msg: >-
+                  Could not baseline guest state on {{ inventory_hostname }}
+                  before mutation; aborting this cluster run.
+
+        - name: Install K3s host prerequisites
+          ansible.builtin.apt:
+            name: "{{ shell_k3s_required_packages }}"
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+        - name: Load K3s kernel modules
+          ansible.builtin.command:
+            argv: [modprobe, "{{ item }}"]
+          loop: "{{ shell_k3s_kernel_modules }}"
+          changed_when: false
+
+        - name: Persist K3s kernel modules
+          ansible.builtin.copy:
+            dest: /etc/modules-load.d/shell-k3s.conf
+            content: "{{ shell_k3s_kernel_modules | join('\n') }}\n"
+            owner: root
+            group: root
+            mode: "0644"
+
+        - name: Configure K3s forwarding sysctls
+          ansible.builtin.copy:
+            dest: /etc/sysctl.d/90-shell-k3s.conf
+            content: |
+              net.bridge.bridge-nf-call-iptables = 1
+              net.bridge.bridge-nf-call-ip6tables = 1
+              net.ipv4.ip_forward = 1
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Reload K3s sysctls
+
+        - name: Disable active swap before K3s starts
+          ansible.builtin.command:
+            argv: [swapoff, --all]
+          changed_when: false
+
+        - name: Disable configured swap mounts
+          ansible.builtin.replace:
+            path: /etc/fstab
+            regexp: '^(\s*[^#]\S*\s+\S+\s+swap\s+.*)$'
+            replace: '# SHELL K3s disabled swap: \1'
+            backup: true
+
+        - name: Install the checksum-verified K3s binary
+          ansible.builtin.copy:
+            src: "{{ shell_k3s_binary_path }}"
+            dest: "{{ shell_k3s_binary_dest }}"
+            owner: root
+            group: root
+            mode: "0755"
+          notify: Restart K3s
+
+        - name: Verify the installed K3s binary version
+          ansible.builtin.command:
+            argv: ["{{ shell_k3s_binary_dest }}", --version]
+          changed_when: false
+          register: shell_k3s_installed_version
+
+        - name: Require the declared K3s version
+          ansible.builtin.assert:
+            that:
+              - shell_k3s_version in shell_k3s_installed_version.stdout
+            fail_msg: >-
+              The installed K3s binary does not report the declared version
+              {{ shell_k3s_version }}.
+
+        - name: Create the private K3s configuration directory
+          ansible.builtin.file:
+            path: "{{ shell_k3s_config_dir }}"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Write the private K3s token file
+          ansible.builtin.copy:
+            dest: "{{ shell_k3s_token_dest }}"
+            content: "{{ shell_k3s_join_material }}\n"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+          notify: Restart K3s
+
+        - name: Render the K3s server configuration
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/k3s-config.yml.j2"
+            dest: "{{ shell_k3s_config_dir }}/config.yaml"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+          notify: Restart K3s
+
+        - name: Render the K3s systemd unit
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/k3s.service.j2"
+            dest: /etc/systemd/system/k3s.service
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Restart K3s
+
+        - name: Apply rendered changes with a single K3s restart
+          ansible.builtin.meta: flush_handlers
+
+        - name: Start the K3s service
+          ansible.builtin.systemd_service:
+            name: "{{ shell_k3s_service_name }}"
+            enabled: true
+            state: started
+            daemon_reload: true
+
+        - name: Wait for the first K3s server to form an etcd leader
+          ansible.builtin.command:
+            argv:
+              - "{{ shell_k3s_binary_dest }}"
+              - kubectl
+              - get
+              - "--raw=/readyz?verbose"
+          register: shell_k3s_first_ready
+          changed_when: false
+          retries: 60
+          delay: 5
+          until: >-
+            shell_k3s_first_ready.rc == 0 and
+            shell_k3s_first_ready.stdout is search('(?m)^\[+\]etcd ok$') and
+            shell_k3s_first_ready.stdout is
+            search('(?m)^\[+\]etcd-readiness ok$')
+          when: inventory_hostname == groups[shell_k3s_target_group][0]
+
+        - name: Wait for the stable API endpoint before joining
+          ansible.builtin.wait_for:
+            host: "{{ shell_k3s_api_host }}"
+            port: 6443
+            timeout: 180
+          when: inventory_hostname != groups[shell_k3s_target_group][0]
+
+        - name: Wait for the local K3s API
+          ansible.builtin.command:
+            argv: ["{{ shell_k3s_binary_dest }}", kubectl, get, --raw=/readyz]
+          changed_when: false
+          register: shell_k3s_local_ready
+          retries: 60
+          delay: 5
+          until: shell_k3s_local_ready.rc == 0
+          when: inventory_hostname != groups[shell_k3s_target_group][0]
+      rescue:
+        - name: Restore the guest fstab from the pre-run baseline
+          ansible.builtin.copy:
+            dest: /etc/fstab
+            content: "{{ shell_k3s_fstab_baseline.content | b64decode }}"
+            owner: root
+            group: root
+            mode: "0644"
+          when: shell_k3s_fstab_baseline.content is defined
+          register: shell_k3s_rescue_fstab
+          failed_when: false
+          changed_when: shell_k3s_rescue_fstab is changed
+
+        - name: Restore active swap after a failed run
+          ansible.builtin.command:
+            argv: [swapon, --all]
+          register: shell_k3s_rescue_swap
+          failed_when: false
+          changed_when: false
+
+        - name: Stop the K3s service after a failed run
+          ansible.builtin.systemd_service:
+            name: "{{ shell_k3s_service_name }}"
+            state: stopped
+            daemon_reload: true
+          register: shell_k3s_rescue_stop
+          failed_when: false
+
+        - name: Disable the K3s service after a failed run
+          ansible.builtin.systemd_service:
+            name: "{{ shell_k3s_service_name }}"
+            enabled: false
+            daemon_reload: true
+          register: shell_k3s_rescue_disable
+          failed_when: false
+
+        - name: Remove the rendered K3s unit if it did not exist before
+          ansible.builtin.file:
+            path: /etc/systemd/system/k3s.service
+            state: absent
+          when: not (shell_k3s_unit_baseline.stat.exists | default(false))
+          register: shell_k3s_rescue_unit
+          failed_when: false
+
+        - name: Report the failed guest and stop the cluster run
+          ansible.builtin.fail:
+            msg: >-
+              K3s runtime configuration failed on {{ inventory_hostname }};
+              restored guest fstab, swap state, and service enablement where
+              possible. See init/docs/k3s-runtime.md for the rescue contract.
+
+  handlers:
+    - name: Reload K3s sysctls
+      ansible.builtin.command:
+        argv: [sysctl, --system]
+      changed_when: true
+
+    - name: Restart K3s
+      ansible.builtin.systemd_service:
+        name: "{{ shell_k3s_service_name }}"
+        enabled: true
+        state: restarted
+        daemon_reload: true
+
+- name: Export the private K3s kubeconfig
+  hosts: "{{ shell_k3s_target_group | default('gcp_k3s_servers') }}"
+  gather_facts: false
+  become: true
+  vars_files:
+    - ../vars/k3s.yml
+  tasks:
+    - name: Require a private kubeconfig destination
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_kubeconfig_path is match('^/')
+          - shell_k3s_api_endpoint is defined
+        fail_msg: >-
+          The K3s kubeconfig destination and stable API endpoint are required.
+      run_once: true
+
+    - name: Stop before kubeconfig export in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Create the private kubeconfig directory
+      ansible.builtin.file:
+        path: "{{ shell_k3s_kubeconfig_path | dirname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Fetch the administrator kubeconfig to private local state
+      ansible.builtin.fetch:
+        src: "{{ shell_k3s_config_dir }}/k3s.yaml"
+        dest: "{{ shell_k3s_kubeconfig_path }}"
+        flat: true
+      changed_when: false
+      no_log: true
+      run_once: true
+
+    - name: Set the private kubeconfig API endpoint
+      ansible.builtin.lineinfile:
+        path: "{{ shell_k3s_kubeconfig_path }}"
+        regexp: '^server:'
+        line: "server: {{ shell_k3s_api_endpoint }}"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      no_log: true

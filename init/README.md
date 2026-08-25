@@ -28,7 +28,11 @@ guest images, bootstraps hosts and guests, and produces the role-inventory input
   cluster, the nested GCP Proxmox host, Proxmox K3s guests, and reusable
   modules.
 - [Guest configuration](ansible/): direct-GCP Debian baseline, nested-host
-  setup, private inventory handoff, and guest verification.
+  setup, private inventory handoff, guest verification, and the separate K3s
+  runtime source.
 - [Guest images](images/): the pinned Debian `virt-customize` baseline used by
   the Proxmox guests.
-- [INIT notes](docs/): runtime inputs and operational boundaries.
+- [INIT notes](docs/):
+  - [Runtime guidance](docs/runtime.md): access paths, secret handling, and
+    private state.
+  - [K3s runtime](docs/k3s-runtime.md): cluster inputs and proof boundaries.

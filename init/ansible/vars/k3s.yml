@@ -1,0 +1,29 @@
+---
+# Shared K3s runtime defaults. Cluster-specific values are private inputs
+# supplied by SUDO/TAR and are asserted by the runtime playbooks.
+shell_k3s_config_dir: /etc/rancher/k3s
+shell_k3s_data_dir: /var/lib/rancher/k3s
+shell_k3s_binary_dest: /usr/local/bin/k3s
+shell_k3s_token_dest: /etc/rancher/k3s/token
+shell_k3s_service_name: k3s
+shell_k3s_cluster_domain: cluster.local
+shell_k3s_flannel_backend: vxlan
+shell_k3s_disable_network_policy: false
+shell_k3s_disable_kube_proxy: false
+shell_k3s_disabled_components:
+  - servicelb
+  - traefik
+shell_k3s_required_packages:
+  - ca-certificates
+  - conntrack
+  - iproute2
+  - iptables
+  - socat
+  - util-linux
+shell_k3s_kernel_modules:
+  - br_netfilter
+  - overlay
+shell_k3s_kubeconfig_path: >-
+  {{ playbook_dir | dirname | dirname | dirname }}/.local/ansible/kubeconfig/{%
+  if shell_k3s_cluster_name is defined and shell_k3s_cluster_name | length > 0
+  %}{{ shell_k3s_cluster_name }}{% else %}k3s{% endif %}.yaml
