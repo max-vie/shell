@@ -7,6 +7,8 @@ shell_k3s_binary_dest: /usr/local/bin/k3s
 shell_k3s_token_dest: /etc/rancher/k3s/token
 shell_k3s_service_name: k3s
 shell_k3s_cluster_domain: cluster.local
+shell_k3s_api_vip_enabled: false
+shell_k3s_api_vip_address: 10.66.0.200
 shell_k3s_flannel_backend: vxlan
 shell_k3s_disable_network_policy: false
 shell_k3s_disable_kube_proxy: false

@@ -22,6 +22,23 @@
           - shell_k3s_version is defined
         fail_msg: The selected K3s verification contract is incomplete.
 
+    - name: Require the Proxmox K3s API VIP contract
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_api_vip_enabled | bool
+          - shell_k3s_api_vip_address == '10.66.0.200'
+          - shell_k3s_api_endpoint == 'https://10.66.0.200:6443'
+          - shell_k3s_api_host == '10.66.0.200'
+        fail_msg: The Proxmox K3s verification must use API VIP 10.66.0.200.
+      when: shell_k3s_target_group == 'proxmox_k3s_servers'
+
+    - name: Keep the direct-GCP verification on its OpenTofu API endpoint
+      ansible.builtin.assert:
+        that:
+          - not (shell_k3s_api_vip_enabled | bool)
+        fail_msg: The direct-GCP verification must not use the Proxmox API VIP.
+      when: shell_k3s_target_group == 'gcp_k3s_servers'
+
     - name: Wait for the selected K3s guests
       ansible.builtin.wait_for_connection:
         connect_timeout: 10
@@ -41,6 +58,21 @@
         - "{{ shell_k3s_data_dir }}/server/db/etcd/member"
       register: shell_k3s_runtime_files
 
+    - name: Inspect the Kube-VIP manifest
+      ansible.builtin.stat:
+        path: "{{ shell_k3s_data_dir }}/server/manifests/kube-vip.yml"
+      register: shell_k3s_kube_vip_manifest
+      when: shell_k3s_api_vip_enabled | bool
+
+    - name: Require the private Kube-VIP manifest
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_kube_vip_manifest.stat.exists
+          - shell_k3s_kube_vip_manifest.stat.isreg
+          - shell_k3s_kube_vip_manifest.stat.mode == '0600'
+        fail_msg: The Proxmox K3s API VIP manifest is missing or world-readable.
+      when: shell_k3s_api_vip_enabled | bool
+
     - name: Require the server runtime and embedded etcd member
       ansible.builtin.assert:
         that:
@@ -50,14 +82,19 @@
           - >-
             ansible_facts.services.get(shell_k3s_service_name ~ '.service',
             {}).status == 'enabled'
+          - shell_k3s_runtime_files.results[0].stat.exists
           - shell_k3s_runtime_files.results[0].stat.isreg
           - shell_k3s_runtime_files.results[0].stat.mode == '0755'
+          - shell_k3s_runtime_files.results[1].stat.exists
           - shell_k3s_runtime_files.results[1].stat.isreg
           - shell_k3s_runtime_files.results[1].stat.mode == '0600'
+          - shell_k3s_runtime_files.results[2].stat.exists
           - shell_k3s_runtime_files.results[2].stat.isreg
           - shell_k3s_runtime_files.results[2].stat.mode == '0600'
+          - shell_k3s_runtime_files.results[3].stat.exists
           - shell_k3s_runtime_files.results[3].stat.isreg
           - shell_k3s_runtime_files.results[3].stat.mode == '0600'
+          - shell_k3s_runtime_files.results[4].stat.exists
           - shell_k3s_runtime_files.results[4].stat.isdir
         fail_msg: >-
           {{ inventory_hostname }} does not meet the private K3s service,
@@ -113,6 +150,21 @@
         fail_msg: >-
           The live K3s node set or version does not match the private contract.
       run_once: true
+
+    - name: Verify the Kube-VIP control-plane DaemonSet
+      ansible.builtin.command:
+        argv:
+          - "{{ shell_k3s_binary_dest }}"
+          - kubectl
+          - -n
+          - kube-system
+          - rollout
+          - status
+          - daemonset/kube-vip-ds
+          - --timeout=180s
+      changed_when: false
+      run_once: true
+      when: shell_k3s_api_vip_enabled | bool
 
     - name: Verify the stable K3s API endpoint
       ansible.builtin.command:

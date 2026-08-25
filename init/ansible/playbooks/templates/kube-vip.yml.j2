@@ -1,0 +1,100 @@
+# INIT owns this control-plane-only manifest for the Proxmox K3s cluster.
+# See ADR 005: use Kube-VIP for the Proxmox K3s API endpoint.
+# Service load balancing remains outside this manifest.
+---
+{% set shell_k3s_api_vip_image =
+  shell_k3s_api_vip_image_repository ~ '@' ~
+  shell_k3s_api_vip_image_digest %}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-vip
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:kube-vip-role
+rules:
+  - apiGroups: [""]
+    resources: [services, services/status, nodes, endpoints]
+    verbs: [list, get, watch, update]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: [leases]
+    verbs: [list, get, watch, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system:kube-vip-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:kube-vip-role
+subjects:
+  - kind: ServiceAccount
+    name: kube-vip
+    namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-vip-ds
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-vip
+    app.kubernetes.io/part-of: init
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-vip
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kube-vip
+    spec:
+      serviceAccountName: kube-vip
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: kube-vip
+          image: "{{ shell_k3s_api_vip_image }}"
+          imagePullPolicy: IfNotPresent
+          args: [manager]
+          env:
+            - name: vip_arp
+              value: "true"
+            - name: vip_interface
+              value: "{{ shell_k3s_api_vip_interface }}"
+            - name: vip_subnet
+              value: "32"
+            - name: port
+              value: "6443"
+            - name: cp_enable
+              value: "true"
+            - name: cp_namespace
+              value: kube-system
+            - name: svc_enable
+              value: "false"
+            - name: vip_leaderelection
+              value: "true"
+            - name: vip_leaseduration
+              value: "60"
+            - name: vip_renewdeadline
+              value: "45"
+            - name: vip_retryperiod
+              value: "5"
+            - name: address
+              value: "{{ shell_k3s_api_vip_address }}"
+            - name: KUBERNETES_SERVICE_HOST
+              value: 127.0.0.1
+            - name: KUBERNETES_SERVICE_PORT
+              value: "6443"
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN, NET_RAW]
+              drop: [ALL]

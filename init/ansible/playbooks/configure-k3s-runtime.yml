@@ -50,6 +50,33 @@
       ansible.builtin.meta: end_play
       when: ansible_check_mode
 
+    - name: Require the Proxmox K3s API VIP contract
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_api_vip_enabled | bool
+          - shell_k3s_api_vip_address == '10.66.0.200'
+          - shell_k3s_api_endpoint == 'https://10.66.0.200:6443'
+          - shell_k3s_api_host == '10.66.0.200'
+          - shell_k3s_api_vip_interface is defined
+          - shell_k3s_api_vip_interface is match('^[A-Za-z0-9_.:-]+$')
+          - shell_k3s_api_vip_image_repository is defined
+          - >-
+            shell_k3s_api_vip_image_repository is match(
+            '^[A-Za-z0-9][A-Za-z0-9._/-]+$')
+          - shell_k3s_api_vip_image_digest is defined
+          - shell_k3s_api_vip_image_digest is match('^sha256:[0-9a-f]{64}$')
+        fail_msg: >-
+          The Proxmox K3s cluster must use the guest-network API VIP
+          10.66.0.200 and a private TAR Kube-VIP image handoff.
+      when: shell_k3s_target_group == 'proxmox_k3s_servers'
+
+    - name: Keep the direct-GCP cluster on its OpenTofu API endpoint
+      ansible.builtin.assert:
+        that:
+          - not (shell_k3s_api_vip_enabled | bool)
+        fail_msg: The direct-GCP cluster must not render the Proxmox API VIP.
+      when: shell_k3s_target_group == 'gcp_k3s_servers'
+
     - name: Require exactly three K3s inventory hosts
       ansible.builtin.assert:
         that:
@@ -130,23 +157,21 @@
 
     - name: Apply the K3s baseline, install, and service start
       block:
-        - name: Baselining guest state for rescue
-          block:
-            - name: Capture the guest fstab before mutation
-              ansible.builtin.slurp:
-                path: /etc/fstab
-              register: shell_k3s_fstab_baseline
+        - name: Capture the guest fstab before mutation
+          ansible.builtin.slurp:
+            path: /etc/fstab
+          register: shell_k3s_fstab_baseline
 
-            - name: Record whether the K3s service existed before this run
-              ansible.builtin.stat:
-                path: /etc/systemd/system/k3s.service
-              register: shell_k3s_unit_baseline
-          rescue:
-            - name: Report the guest-state baseline failure
-              ansible.builtin.fail:
-                msg: >-
-                  Could not baseline guest state on {{ inventory_hostname }}
-                  before mutation; aborting this cluster run.
+        - name: Record whether the K3s service existed before this run
+          ansible.builtin.stat:
+            path: /etc/systemd/system/k3s.service
+          register: shell_k3s_unit_baseline
+
+        - name: Record whether the Kube-VIP manifest existed before this run
+          ansible.builtin.stat:
+            path: "{{ shell_k3s_data_dir }}/server/manifests/kube-vip.yml"
+          register: shell_k3s_kube_vip_baseline
+          when: shell_k3s_api_vip_enabled | bool
 
         - name: Install K3s host prerequisites
           ansible.builtin.apt:
@@ -224,6 +249,25 @@
             group: root
             mode: "0700"
 
+        - name: Create the K3s static manifest directory for the API VIP
+          ansible.builtin.file:
+            path: "{{ shell_k3s_data_dir }}/server/manifests"
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+          when: shell_k3s_api_vip_enabled | bool
+
+        - name: Render the control-plane-only Kube-VIP manifest
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/kube-vip.yml.j2"
+            dest: "{{ shell_k3s_data_dir }}/server/manifests/kube-vip.yml"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+          when: shell_k3s_api_vip_enabled | bool
+
         - name: Write the private K3s token file
           ansible.builtin.copy:
             dest: "{{ shell_k3s_token_dest }}"
@@ -280,6 +324,22 @@
             shell_k3s_first_ready.stdout is
             search('(?m)^\[+\]etcd-readiness ok$')
           when: inventory_hostname == groups[shell_k3s_target_group][0]
+
+        - name: Wait for the Kube-VIP DaemonSet on the first server
+          ansible.builtin.command:
+            argv:
+              - "{{ shell_k3s_binary_dest }}"
+              - kubectl
+              - -n
+              - kube-system
+              - rollout
+              - status
+              - daemonset/kube-vip-ds
+              - --timeout=120s
+          changed_when: false
+          when:
+            - shell_k3s_api_vip_enabled | bool
+            - inventory_hostname == groups[shell_k3s_target_group][0]
 
         - name: Wait for the stable API endpoint before joining
           ansible.builtin.wait_for:
@@ -339,6 +399,16 @@
             state: absent
           when: not (shell_k3s_unit_baseline.stat.exists | default(false))
           register: shell_k3s_rescue_unit
+          failed_when: false
+
+        - name: Remove the Kube-VIP manifest if this run created it
+          ansible.builtin.file:
+            path: "{{ shell_k3s_data_dir }}/server/manifests/kube-vip.yml"
+            state: absent
+          when:
+            - shell_k3s_api_vip_enabled | bool
+            - not (shell_k3s_kube_vip_baseline.stat.exists | default(false))
+          register: shell_k3s_rescue_kube_vip
           failed_when: false
 
         - name: Report the failed guest and stop the cluster run
