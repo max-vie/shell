@@ -17,6 +17,12 @@ CONTRACT_FILES = {
     "identity": "identity-model.json",
     "kubernetes": "kubernetes-ecosystem-profile.json",
 }
+CONTRACT_VERSIONS = {
+    "delivery-host-profile": "2.0.0",
+    "freeipa-host-profile": "2.0.0",
+    "identity-model": "1.0.0",
+    "kubernetes-ecosystem-profile": "1.0.0",
+}
 COMMON_FIELDS = {
     "schema_version",
     "contract_version",
@@ -40,10 +46,50 @@ def require(condition: bool, message: str) -> None:
         raise AccessContractError(message)
 
 
-def read_json_object(path: Path, label: str) -> dict[str, Any]:
-    require(path.is_file() and not path.is_symlink(), f"missing regular {label}: {path}")
+def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    document: dict[str, Any] = {}
+    for key, value in pairs:
+        require(key not in document, f"duplicate JSON key: {key}")
+        document[key] = value
+    return document
+
+
+def resolve_repository_file(
+    path: Path,
+    *,
+    repository_root: Path,
+    label: str,
+) -> Path:
+    require(not path.is_symlink(), f"missing regular {label}: {path}")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        resolved_root = repository_root.resolve(strict=True)
+        resolved_path = path.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise AccessContractError(f"missing regular {label}: {path}") from error
+    require(
+        resolved_path.is_relative_to(resolved_root),
+        f"unsafe {label}: outside repository",
+    )
+    require(resolved_path.is_file(), f"missing regular {label}: {path}")
+    return resolved_path
+
+
+def read_json_object(
+    path: Path,
+    label: str,
+    *,
+    repository_root: Path,
+) -> dict[str, Any]:
+    resolved_path = resolve_repository_file(
+        path,
+        repository_root=repository_root,
+        label=label,
+    )
+    try:
+        value = json.loads(
+            resolved_path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise AccessContractError(f"invalid JSON for {label}: {path}") from error
     require(isinstance(value, dict), f"{label} must contain a JSON object")
@@ -60,7 +106,10 @@ def require_common(
 ) -> None:
     require(set(document) == COMMON_FIELDS | fields, f"{label} shape changed")
     require(document["schema_version"] == "1.0", f"{label} schema changed")
-    require(document["contract_version"] == "1.0.0", f"{label} version changed")
+    require(
+        document["contract_version"] == CONTRACT_VERSIONS[contract_id],
+        f"{label} version changed",
+    )
     require(document["contract_id"] == contract_id, f"{label} ID changed")
     require(
         isinstance(document["description"], str)
@@ -84,9 +133,14 @@ def require_reference(
 ) -> None:
     require(value == expected, f"{label} reference changed")
     relative = Path(expected)
-    require(not relative.is_absolute() and ".." not in relative.parts, f"unsafe {label}")
-    target = repository_root / relative
-    require(target.is_file() and not target.is_symlink(), f"missing {label}: {expected}")
+    require(
+        not relative.is_absolute() and ".." not in relative.parts, f"unsafe {label}"
+    )
+    resolve_repository_file(
+        repository_root / relative,
+        repository_root=repository_root,
+        label=label,
+    )
 
 
 def validate_identity(document: dict[str, Any]) -> None:
@@ -142,6 +196,7 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
             "host",
             "identity",
             "network",
+            "execution",
             "private_custody",
             "required_contracts",
         },
@@ -176,6 +231,24 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
             "udp_ports": [53, 88, 464],
         },
         "FreeIPA network contract changed",
+    )
+    execution = document["execution"]
+    require(
+        isinstance(execution, dict)
+        and set(execution) == {"owner", "playbook", "mode", "status"},
+        "FreeIPA execution shape changed",
+    )
+    require(
+        execution["owner"] == "init"
+        and execution["mode"] == "contract-preview"
+        and execution["status"] == "blocked-by-required-contracts",
+        "FreeIPA execution boundary changed",
+    )
+    require_reference(
+        execution["playbook"],
+        expected="init/ansible/playbooks/configure-identity-service.yml",
+        repository_root=repository_root,
+        label="FreeIPA execution playbook",
     )
     require(
         document["private_custody"]
@@ -226,6 +299,7 @@ def validate_delivery(document: dict[str, Any], repository_root: Path) -> None:
             "inventory_group",
             "host",
             "trust",
+            "execution",
             "required_contracts",
         },
     )
@@ -260,6 +334,24 @@ def validate_delivery(document: dict[str, Any], repository_root: Path) -> None:
         expected="sudo/access/identity-model.json",
         repository_root=repository_root,
         label="delivery identity model",
+    )
+    execution = document["execution"]
+    require(
+        isinstance(execution, dict)
+        and set(execution) == {"owner", "playbook", "mode", "status"},
+        "delivery execution shape changed",
+    )
+    require(
+        execution["owner"] == "init"
+        and execution["mode"] == "contract-preview"
+        and execution["status"] == "blocked-by-required-contracts",
+        "delivery execution boundary changed",
+    )
+    require_reference(
+        execution["playbook"],
+        expected="init/ansible/playbooks/configure-delivery-node.yml",
+        repository_root=repository_root,
+        label="delivery execution playbook",
     )
     require(
         document["required_contracts"]
@@ -318,12 +410,18 @@ def validate_kubernetes(document: dict[str, Any], repository_root: Path) -> None
     )
 
 
-def validate_contracts(repository_root: Path = REPOSITORY_ROOT) -> dict[str, dict[str, Any]]:
-    """Validate every tracked access contract without reading private state."""
+def validate_contracts(
+    repository_root: Path = REPOSITORY_ROOT,
+) -> dict[str, dict[str, Any]]:
+    """Validate public access contracts and their source references offline."""
 
     access_root = repository_root / ACCESS_DIRECTORY
     documents = {
-        name: read_json_object(access_root / filename, name)
+        name: read_json_object(
+            access_root / filename,
+            name,
+            repository_root=repository_root,
+        )
         for name, filename in CONTRACT_FILES.items()
     }
     validate_identity(documents["identity"])

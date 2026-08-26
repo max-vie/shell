@@ -6,6 +6,7 @@ import copy
 import importlib.util
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -34,6 +35,13 @@ class TestAccessContracts(unittest.TestCase):
             document = json.loads((source / filename).read_text(encoding="utf-8"))
             self.documents[name] = document
             self.write(name, document)
+        for relative in (
+            "init/ansible/playbooks/configure-identity-service.yml",
+            "init/ansible/playbooks/configure-delivery-node.yml",
+        ):
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(SOURCE_ROOT / relative, target)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -61,6 +69,35 @@ class TestAccessContracts(unittest.TestCase):
 
         (self.access_root / validator.CONTRACT_FILES["identity"]).write_bytes(b"\xff")
         with self.assertRaisesRegex(validator.AccessContractError, "invalid JSON"):
+            validator.validate_contracts(self.root)
+
+    def test_rejects_duplicate_json_keys(self) -> None:
+        delivery_path = self.access_root / validator.CONTRACT_FILES["delivery"]
+        delivery_path.write_text(
+            '{"schema_version":"0","schema_version":"1.0"}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "duplicate JSON key"
+        ):
+            validator.validate_contracts(self.root)
+
+        nested_duplicate = json.dumps(self.documents["delivery"]).replace(
+            '"owner": "init", "playbook"',
+            '"owner": "sudo", "owner": "init", "playbook"',
+            1,
+        )
+        delivery_path.write_text(nested_duplicate, encoding="utf-8")
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "duplicate JSON key"
+        ):
+            validator.validate_contracts(self.root)
+
+    def test_rejects_contract_version_drift(self) -> None:
+        freeipa = self.altered("freeipa")
+        freeipa["contract_version"] = "1.0.0"
+        self.write("freeipa", freeipa)
+        with self.assertRaisesRegex(validator.AccessContractError, "version changed"):
             validator.validate_contracts(self.root)
 
     def test_rejects_identity_group_drift(self) -> None:
@@ -102,7 +139,60 @@ class TestAccessContracts(unittest.TestCase):
         kubernetes = self.altered("kubernetes")
         kubernetes["required_contracts"]["service_endpoints"]["status"] = "implemented"  # type: ignore[index]
         self.write("kubernetes", kubernetes)
-        with self.assertRaisesRegex(validator.AccessContractError, "required contracts"):
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "required contracts"
+        ):
+            validator.validate_contracts(self.root)
+
+    def test_rejects_changed_execution_playbooks(self) -> None:
+        freeipa = self.altered("freeipa")
+        freeipa["execution"]["playbook"] = str(  # type: ignore[index]
+            self.root.parent / "identity.yml"
+        )
+        self.write("freeipa", freeipa)
+        with self.assertRaisesRegex(validator.AccessContractError, "reference changed"):
+            validator.validate_contracts(self.root)
+
+        self.write("freeipa", self.documents["freeipa"])
+        delivery = self.altered("delivery")
+        delivery["execution"]["status"] = "ready"  # type: ignore[index]
+        self.write("delivery", delivery)
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "execution boundary"
+        ):
+            validator.validate_contracts(self.root)
+
+    def test_rejects_missing_or_unsafe_execution_playbooks(self) -> None:
+        delivery_path = (
+            self.root
+            / (
+                self.documents["delivery"]["execution"]["playbook"]  # type: ignore[index]
+            )
+        )
+        delivery_path.unlink()
+        with self.assertRaisesRegex(validator.AccessContractError, "missing regular"):
+            validator.validate_contracts(self.root)
+
+        outside_playbook = Path(self.temporary.name) / "delivery.yml"
+        outside_playbook.write_text("---\n", encoding="utf-8")
+        delivery_path.symlink_to(outside_playbook)
+        with self.assertRaisesRegex(validator.AccessContractError, "missing regular"):
+            validator.validate_contracts(self.root)
+
+        delivery_path.unlink()
+        shutil.rmtree(self.root / "init")
+        outside_init = Path(self.temporary.name) / "outside-init"
+        outside_target = outside_init / "ansible/playbooks/configure-delivery-node.yml"
+        outside_target.parent.mkdir(parents=True)
+        outside_target.write_text("---\n", encoding="utf-8")
+        (outside_target.parent / "configure-identity-service.yml").write_text(
+            "---\n",
+            encoding="utf-8",
+        )
+        (self.root / "init").symlink_to(outside_init, target_is_directory=True)
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "outside repository"
+        ):
             validator.validate_contracts(self.root)
 
     def test_rejects_missing_or_symlinked_contracts(self) -> None:

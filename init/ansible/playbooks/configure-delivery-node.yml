@@ -1,0 +1,108 @@
+---
+# Import the delivery execution boundary while MAKE-owned workloads,
+# endpoints, and SUDO-owned credentials remain undefined.
+- name: Preview the deferred delivery host
+  hosts: delivery_nodes
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    shell_access_validator: >-
+      {{ playbook_dir }}/../../../sudo/scripts/validate_access_contracts.py
+    shell_delivery_profile_path: >-
+      {{ playbook_dir }}/../../../sudo/access/delivery-host-profile.json
+  pre_tasks:
+    - name: Validate all public SUDO access contracts
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ shell_access_validator }}"
+      check_mode: false
+      changed_when: false
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Load the public delivery host profile
+      ansible.builtin.include_vars:
+        file: "{{ shell_delivery_profile_path }}"
+        name: shell_delivery_profile
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Require the current delivery execution boundary
+      ansible.builtin.assert:
+        that:
+          - shell_delivery_profile.policy_owner == 'sudo'
+          - "'init' in shell_delivery_profile.consumer_owners"
+          - "'make' in shell_delivery_profile.consumer_owners"
+          - shell_delivery_profile.proof_status == 'source-only'
+          - shell_delivery_profile.inventory_group == 'delivery_nodes'
+          - shell_delivery_profile.host.name == 'delivery-01'
+          - shell_delivery_profile.host.ip_address == '10.77.0.211'
+          - shell_delivery_profile.host.operating_system == 'debian-13'
+          - shell_delivery_profile.execution.owner == 'init'
+          - shell_delivery_profile.execution.mode == 'contract-preview'
+          - >-
+            shell_delivery_profile.execution.status ==
+            'blocked-by-required-contracts'
+          - >-
+            shell_delivery_profile.required_contracts.workload_configuration.status
+            == 'not-defined'
+          - >-
+            shell_delivery_profile.required_contracts.service_endpoints.status
+            == 'not-defined'
+          - >-
+            shell_delivery_profile.required_contracts.delivery_credentials.status
+            == 'not-defined'
+          - groups['delivery_nodes'] | length == 1
+          - shell_delivery_profile.host.name in groups['delivery_nodes']
+          - >-
+            hostvars[shell_delivery_profile.host.name].ansible_host ==
+            shell_delivery_profile.host.ip_address
+        fail_msg: >-
+          The SUDO delivery profile, INIT inventory, or deferred contract
+          boundary has changed.
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Require the selected delivery inventory host
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == 'delivery-01'
+          - ansible_host == '10.77.0.211'
+          - shell_expected_address == '10.77.0.211'
+          - shell_role | default('') == 'delivery'
+          - shell_cluster | default('') == 'shared'
+          - shell_transport | default('') == 'gcp_iap'
+          - (ansible_user | default('')) is string
+          - (ansible_user | default('')) | length > 0
+          - (ansible_user | default('')) != 'root'
+        fail_msg: The selected host does not match the delivery contract.
+      tags: [always]
+
+    - name: Refuse delivery mutation while required contracts are undefined
+      ansible.builtin.fail:
+        msg: >-
+          Delivery mutation is not authorized by the current source-only
+          contracts. Complete the required SUDO and MAKE contracts before
+          extending this playbook.
+      when: not ansible_check_mode
+      tags: [always]
+
+  tasks:
+    - name: Describe the deferred delivery configuration
+      ansible.builtin.debug:
+        msg: >-
+          Delivery configuration remains blocked until MAKE defines workload
+          configuration and service endpoints and SUDO defines the delivery
+          credential handoff.
+      when: ansible_check_mode
+
+    - name: Stop after the delivery contract preview
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode

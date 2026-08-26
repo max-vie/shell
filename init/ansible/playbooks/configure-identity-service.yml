@@ -1,0 +1,109 @@
+---
+# Import the identity execution boundary without selecting the operating
+# system, secret store, domain, realm, or artifact supply.
+- name: Preview the deferred identity service
+  hosts: identity_nodes
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    shell_access_validator: >-
+      {{ playbook_dir }}/../../../sudo/scripts/validate_access_contracts.py
+    shell_identity_profile_path: >-
+      {{ playbook_dir }}/../../../sudo/access/freeipa-host-profile.json
+  pre_tasks:
+    - name: Validate all public SUDO access contracts
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ shell_access_validator }}"
+      check_mode: false
+      changed_when: false
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Load the public identity host profile
+      ansible.builtin.include_vars:
+        file: "{{ shell_identity_profile_path }}"
+        name: shell_identity_profile
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Require the current identity execution boundary
+      ansible.builtin.assert:
+        that:
+          - shell_identity_profile.policy_owner == 'sudo'
+          - "'init' in shell_identity_profile.consumer_owners"
+          - shell_identity_profile.proof_status == 'source-only'
+          - shell_identity_profile.inventory_group == 'identity_nodes'
+          - shell_identity_profile.host.name == 'identity-01'
+          - shell_identity_profile.host.ip_address == '10.77.0.210'
+          - shell_identity_profile.execution.owner == 'init'
+          - shell_identity_profile.execution.mode == 'contract-preview'
+          - >-
+            shell_identity_profile.execution.status ==
+            'blocked-by-required-contracts'
+          - >-
+            shell_identity_profile.required_contracts.operating_system.status
+            == 'not-defined'
+          - >-
+            shell_identity_profile.required_contracts.artifact_supply.status
+            == 'not-defined'
+          - >-
+            shell_identity_profile.required_contracts.identity_configuration.status
+            == 'not-defined'
+          - >-
+            shell_identity_profile.required_contracts.identity_credentials.status
+            == 'not-defined'
+          - groups['identity_nodes'] | length == 1
+          - shell_identity_profile.host.name in groups['identity_nodes']
+          - >-
+            hostvars[shell_identity_profile.host.name].ansible_host ==
+            shell_identity_profile.host.ip_address
+        fail_msg: >-
+          The SUDO identity profile, INIT inventory, or deferred contract
+          boundary has changed.
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Require the selected identity inventory host
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == 'identity-01'
+          - ansible_host == '10.77.0.210'
+          - shell_expected_address == '10.77.0.210'
+          - shell_role | default('') == 'identity'
+          - shell_cluster | default('') == 'shared'
+          - shell_transport | default('') == 'gcp_iap'
+          - (ansible_user | default('')) is string
+          - (ansible_user | default('')) | length > 0
+          - (ansible_user | default('')) != 'root'
+        fail_msg: The selected host does not match the identity contract.
+      tags: [always]
+
+    - name: Refuse identity mutation while required contracts are undefined
+      ansible.builtin.fail:
+        msg: >-
+          Identity mutation is not authorized by the current source-only
+          contracts. Complete the required MAN, TAR, SUDO, and INIT contracts
+          before extending this playbook.
+      when: not ansible_check_mode
+      tags: [always]
+
+  tasks:
+    - name: Describe the deferred identity configuration
+      ansible.builtin.debug:
+        msg: >-
+          Identity configuration remains blocked until MAN decides the host
+          operating system, TAR defines artifact supply, and SUDO defines the
+          domain, realm, credentials, and secret-store handoff.
+      when: ansible_check_mode
+
+    - name: Stop after the identity contract preview
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode

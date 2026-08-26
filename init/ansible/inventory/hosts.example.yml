@@ -43,11 +43,15 @@ all:
             identity-01:
               ansible_host: 10.77.0.210
               shell_expected_address: 10.77.0.210
+              shell_role: identity
+              shell_cluster: shared
               shell_transport: gcp_iap
               gcp_zone: europe-west4-a
             delivery-01:
               ansible_host: 10.77.0.211
               shell_expected_address: 10.77.0.211
+              shell_role: delivery
+              shell_cluster: shared
               shell_transport: gcp_iap
               gcp_zone: europe-west4-b
         gcp_k3s_servers:
@@ -81,3 +85,9 @@ all:
               ansible_host: 10.66.0.203
               shell_expected_address: 10.66.0.203
               shell_address_cidr: 10.66.0.203/24
+    identity_nodes:
+      hosts:
+        identity-01: {}
+    delivery_nodes:
+      hosts:
+        delivery-01: {}

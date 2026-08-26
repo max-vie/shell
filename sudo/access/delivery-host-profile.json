@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "contract_version": "1.0.0",
+  "contract_version": "2.0.0",
   "contract_id": "delivery-host-profile",
   "description": "Source-only SUDO trust boundary for the shared delivery host.",
   "policy_owner": "sudo",
@@ -19,6 +19,12 @@
   "trust": {
     "identity_host_profile": "sudo/access/freeipa-host-profile.json",
     "identity_model": "sudo/access/identity-model.json"
+  },
+  "execution": {
+    "owner": "init",
+    "playbook": "init/ansible/playbooks/configure-delivery-node.yml",
+    "mode": "contract-preview",
+    "status": "blocked-by-required-contracts"
   },
   "required_contracts": {
     "workload_configuration": {

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "contract_version": "1.0.0",
+  "contract_version": "2.0.0",
   "contract_id": "freeipa-host-profile",
   "description": "Source-only SUDO policy for the shared FreeIPA identity and internal DNS host.",
   "policy_owner": "sudo",
@@ -23,6 +23,12 @@
   "network": {
     "tcp_ports": [53, 80, 88, 389, 443, 464, 636],
     "udp_ports": [53, 88, 464]
+  },
+  "execution": {
+    "owner": "init",
+    "playbook": "init/ansible/playbooks/configure-identity-service.yml",
+    "mode": "contract-preview",
+    "status": "blocked-by-required-contracts"
   },
   "private_custody": {
     "root": ".local/sudo/identity",
