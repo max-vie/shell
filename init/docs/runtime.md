@@ -115,6 +115,8 @@ and read-only retrieval path have source and live evidence.
 | Nested Proxmox host state | `.local/opentofu/gcp/proxmox-host/` | `init/opentofu/gcp/proxmox-host` |
 | Proxmox K3s guest state | `.local/opentofu/proxmox/k3s/` | `init/opentofu/proxmox/k3s` |
 | Rendered Ansible inventory | `.local/ansible/inventory.json` | `init/scripts/render_node_inventory.py` |
+| Private Ansible connection inventory | `.local/ansible/connection-inventory.yml` | private INIT input |
+| K3s runtime variables | `.local/ansible/k3s-runtime/<cluster>.json` | private INIT input |
 | K3s administrator kubeconfig | `.local/ansible/kubeconfig/` | K3s configuration playbook |
 | Prepared image inputs and outputs | `.local/init-images/` | `init/images/` |
 | Proxmox image-upload temporary files | Private `PROXMOX_VE_TMPDIR` | Proxmox provider wrapper |

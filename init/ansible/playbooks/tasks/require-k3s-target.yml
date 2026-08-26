@@ -21,6 +21,7 @@
       - ansible_play_hosts_all == groups[shell_k3s_target_group]
       - shell_k3s_api_endpoint == shell_inventory_k3s_api_endpoint
       - shell_k3s_api_host == shell_inventory_k3s_api_host
+      - shell_k3s_api_host == shell_inventory_k3s_api_address
     fail_msg: >-
       Select exactly one complete ordered rendered K3s cluster and its
       OpenTofu-owned API endpoint.
@@ -40,6 +41,16 @@
           'proxmox-k3s-03': '10.66.0.203'
         }[item]
       - hostvars[item].ansible_host == hostvars[item].shell_expected_address
+      - hostvars[item].ansible_connection | default('ssh') == 'ssh'
+      - hostvars[item].ansible_user is defined
+      - hostvars[item].ansible_user is string
+      - hostvars[item].ansible_user | length > 0
+      - hostvars[item].ansible_user != 'root'
+      - hostvars[item].ansible_ssh_common_args is defined
+      - hostvars[item].ansible_ssh_common_args is string
+      - >-
+        hostvars[item].ansible_ssh_common_args is
+        search('StrictHostKeyChecking=yes')
       - hostvars[item].shell_role | default('') == 'k3s'
       - hostvars[item].shell_cluster | default('') == shell_k3s_cluster_name
       - hostvars[item].shell_operating_system | default('') == 'debian-13'

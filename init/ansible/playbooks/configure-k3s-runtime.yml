@@ -13,6 +13,7 @@
   pre_tasks:
     - name: Validate the complete K3s target
       ansible.builtin.import_tasks: tasks/require-k3s-target.yml
+      tags: [always]
 
     - name: Require the selected K3s cluster contract
       ansible.builtin.assert:
@@ -458,6 +459,7 @@
   pre_tasks:
     - name: Validate the complete K3s target
       ansible.builtin.import_tasks: tasks/require-k3s-target.yml
+      tags: [always]
 
   tasks:
     - name: Require a private kubeconfig destination

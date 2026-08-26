@@ -32,6 +32,40 @@ the matching datastore. Its handling rules live in the
 [`runtime.md`](runtime.md) guide. The input file and generated kubeconfig
 remain under private ignored state described in that guide.
 
+## Controller launcher
+
+Use the INIT controller launcher for K3s configuration and verification. It
+accepts only `gcp` or `proxmox` and derives the matching Ansible group and
+playbook. It does not accept arbitrary target groups, `--limit`, or
+`--start-at-task` values.
+
+Before Ansible starts, the launcher checks the generated inventory, the
+TAR-to-INIT K3s handoff, the staged binary checksum, and the private cluster
+runtime variables. The runtime variable files are
+`.local/ansible/k3s-runtime/gcp.json` and
+`.local/ansible/k3s-runtime/proxmox.json`. GCP requires the pod and service
+CIDRs. Proxmox also requires the Kube-VIP interface. These files contain no
+credentials and must be mode `0600` below mode-`0700` private directories.
+
+The generated topology inventory is combined with the private connection
+inventory at `.local/ansible/connection-inventory.yml`. The latter supplies
+the user, SSH route, and reviewed host-key settings. It remains a local
+mode-`0600` input and is never replaced by the generated topology file.
+Its effective target variables may add only `ansible_connection`,
+`ansible_user`, `ansible_ssh_common_args`, `ansible_ssh_private_key_file`,
+`ansible_python_interpreter`, `ansible_port`, and `gcp_known_hosts_file`.
+The launcher renders both inventories with `ansible-inventory` before starting
+the playbook. It rejects connection plugins other than SSH, root login,
+non-port-22 SSH, missing strict host-key checking, unsupported connection
+variables, and connection values that change the rendered target contract. GCP
+routes must retain the generated IAP host, project, and zone expressions.
+Proxmox routes must use a proxy through `proxmox-host` or `10.77.0.220`.
+The shared target preflight repeats these connection checks inside Ansible.
+
+The launcher writes merged Ansible variables to a temporary mode-`0600` file
+and removes it after Ansible exits. Token values remain owned and read by the
+existing INIT playbook from the fixed SUDO paths.
+
 ## Runtime behavior
 
 The shared preflight rejects an invented group, a cluster/group mismatch, an

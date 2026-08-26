@@ -31,6 +31,7 @@ class TestK3sRuntimeContract(unittest.TestCase):
                 source.count("import_tasks: tasks/require-k3s-target.yml"),
                 2,
             )
+            self.assertEqual(source.count("tags: [always]"), 2)
 
     def test_target_gate_binds_exact_clusters_nodes_and_metadata(self) -> None:
         source = TARGET_TASKS.read_text(encoding="utf-8")
@@ -47,6 +48,12 @@ class TestK3sRuntimeContract(unittest.TestCase):
             "hostvars[item].ansible_host == hostvars[item].shell_expected_address",
             "shell_k3s_api_endpoint == shell_inventory_k3s_api_endpoint",
             "shell_k3s_api_host == shell_inventory_k3s_api_host",
+            "shell_k3s_api_host == shell_inventory_k3s_api_address",
+            "hostvars[item].ansible_connection | default('ssh') == 'ssh'",
+            "hostvars[item].ansible_user is defined",
+            "hostvars[item].ansible_user != 'root'",
+            "hostvars[item].ansible_ssh_common_args is defined",
+            "search('StrictHostKeyChecking=yes')",
             "hostvars[item].shell_transport | default('') == 'gcp_iap'",
             "hostvars[item].shell_transport | default('') == 'proxmox_ssh'",
             'loop: "{{ groups[shell_k3s_target_group] }}"',
