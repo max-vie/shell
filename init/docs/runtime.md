@@ -31,6 +31,34 @@ ignored inventory. Keep the route on `10.66.0.0/24` and target the declared
 Proxmox guests only. Provider authentication, tunnel reachability, guest
 readiness, and K3s API health need separate approved execution and evidence.
 
+## Identity and delivery contract previews
+
+SUDO owns the source-only FreeIPA policy for `identity-01` and the trust and
+private-input boundary for `delivery-01`. The identity target is AlmaLinux 9,
+which is RHEL-compatible. INIT records the separate GCP image contract and
+keeps the identity host out of the direct-GCP Debian baseline group, but does
+not yet prepare or prove the identity image.
+
+TAR owns the source-reference delivery image lock. MAKE owns the delivery-node
+consumer requirements and the later Forgejo service deployment. INIT consumes
+these public contracts through the identity and delivery preview playbooks.
+The previews validate ownership, host identity, DNS and service references,
+artifact pins, and private-input shapes, then refuse normal execution while
+artifact and credential handoffs remain incomplete.
+
+The delivery image tags and linux/amd64 digests were resolved through registry
+inspection on 26.08.2026. The lock remains source-reference-only because the
+images have not been acquired, staged, signature-verified, or run.
+
+The refusal gates apply when Ansible selects the declared role group and runs
+the `always` pre-tasks. An empty or excluded target can produce a no-host
+result, so these previews must be wrapped by an exact-target preflight before
+any mutation tasks are added.
+
+No FreeIPA package installation, credential generation, image acquisition,
+guest startup, Forgejo deployment, or live DNS proof is included in this
+source-only boundary.
+
 ## Secrets
 
 ### Inventory and handling
@@ -44,8 +72,9 @@ readiness, and K3s API health need separate approved execution and evidence.
 | Administrator kubeconfig | INIT | Later cluster consumers | Ignored `.local/ansible/kubeconfig/` state, mode `0600` |
 
 Keep credentials, private keys, token values, kubeconfigs, state, plans, and
-generated inventories out of Git. Keep real variable files outside tracked
-source and use `.tfvars` files for private input values. Pass process
+generated inventories out of Git, regardless of their storage format. Keep
+real variable files outside tracked source and use `.tfvars` files for private
+input values. Pass process
 credentials through a private wrapper or environment, never shell history.
 Use `umask 077` for private handoff files, private `.local/` directories, and
 TLS and SSH host-key verification.

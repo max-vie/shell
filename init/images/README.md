@@ -1,9 +1,12 @@
 # Debian guest image
 
 This directory prepares one reusable Debian 13 baseline for the nested
-Proxmox K3s guests. The source checksum is tracked; downloaded sources,
-prepared images, manifests, and generated OpenTofu inputs stay under ignored
-`.local/init-images/`.
+Proxmox K3s guests. Direct GCP Debian nodes use pinned GCP source images and
+the INIT Ansible baseline instead of this qcow2 handoff. The source checksum
+is tracked; downloaded sources, prepared images, manifests, and generated
+OpenTofu inputs stay under ignored `.local/init-images/`. The FreeIPA identity
+host targets a separate AlmaLinux 9 image contract and is not prepared by this
+Debian path.
 
 `virt-customize` installs the common guest packages, the `init` account, SSH
 policy, and the QEMU guest agent. `virt-sysprep` removes machine-specific
