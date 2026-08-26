@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "watch-supply",
+  "description": "TAR source pins for the first WATCH metrics slice.",
+  "policy_owner": "tar",
+  "execution_owner": "make",
+  "proof_status": "source-reference-only",
+  "environment": "environment-gcp",
+  "staging": {
+    "mode": "local-verified-artifacts",
+    "network_acquisition_owner": "tar",
+    "consumer_network_acquisition": false,
+    "artifact_directory": "watch",
+    "chart_cache_layout": "charts/{name}-{version}.tgz"
+  },
+  "charts": {
+    "kube-prometheus-stack": {
+      "repository": "https://prometheus-community.github.io/helm-charts",
+      "name": "kube-prometheus-stack",
+      "version": "88.5.2",
+      "source": "https://github.com/prometheus-community/helm-charts/releases/download/kube-prometheus-stack-88.5.2/kube-prometheus-stack-88.5.2.tgz",
+      "sha256": "aac57bfb6fb53c3a9c6f4f0526b61145507dd81ff5312c67305ba5e31b7732d6"
+    }
+  },
+  "runtime_image_platform": "linux/amd64",
+  "runtime_image_digests": {
+    "quay.io/prometheus/prometheus:v3.14.0-distroless": "sha256:50c707e96da5ade383cb1707790576480485e93de06aa60ad8802cb5f744bd0a",
+    "quay.io/prometheus/alertmanager:v0.34.0": "sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d",
+    "quay.io/prometheus-operator/prometheus-operator:v0.93.1": "sha256:e52bb28fd41c98dd407c7a8cba8bdcfe7eabd7447e250afaf1fe7bb816dedbff",
+    "quay.io/prometheus-operator/prometheus-config-reloader:v0.93.1": "sha256:428f088fe6fe07ab138bda92113664b04848a1dc408e4d3680a60ecdb55d1a65",
+    "quay.io/prometheus/node-exporter:v1.12.1-distroless": "sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106",
+    "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0": "sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b",
+    "ghcr.io/jkroepke/kube-webhook-certgen:1.8.5": "sha256:d0e80b2f62fe43bb5e1b96adc692132fb4522e802f4cf673c09b1f94722b8cb6"
+  },
+  "required_runtime_images": [
+    "quay.io/prometheus/prometheus:v3.14.0-distroless",
+    "quay.io/prometheus/alertmanager:v0.34.0",
+    "quay.io/prometheus-operator/prometheus-operator:v0.93.1",
+    "quay.io/prometheus-operator/prometheus-config-reloader:v0.93.1",
+    "quay.io/prometheus/node-exporter:v1.12.1-distroless",
+    "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0",
+    "ghcr.io/jkroepke/kube-webhook-certgen:1.8.5"
+  ],
+  "persistent_runtime_images": [
+    "quay.io/prometheus/prometheus:v3.14.0-distroless",
+    "quay.io/prometheus/alertmanager:v0.34.0",
+    "quay.io/prometheus-operator/prometheus-operator:v0.93.1",
+    "quay.io/prometheus-operator/prometheus-config-reloader:v0.93.1",
+    "quay.io/prometheus/node-exporter:v1.12.1-distroless",
+    "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0"
+  ]
+}
