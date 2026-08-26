@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -37,6 +38,9 @@ COMMON_FIELDS = {
 CLUSTERS = ["gcp", "proxmox"]
 GROUPS = ["platform-admins", "platform-operators", "auditors"]
 UNDECIDED = "undecided"
+SOPS_AGE = "sops-age"
+PLAINTEXT_AGE_IDENTITY = "plaintext-age-identity"
+SERVICE_GENERATED_PRIVATE_STATE = "service-generated-private-state"
 
 
 class AccessContractError(ValueError):
@@ -533,10 +537,11 @@ def validate_delivery_input_contract(
         document["private_custody"]
         == {
             "root": ".local/sudo/delivery",
-            "storage": UNDECIDED,
+            "storage": SOPS_AGE,
             "ignored": True,
             "directory_mode": "0700",
             "file_mode": "0600",
+            "plaintext_values_tracked": False,
         },
         "delivery private custody changed",
     )
@@ -544,12 +549,28 @@ def validate_delivery_input_contract(
         document["private_inputs"]
         == {
             "bootstrap": {
-                "path": ".local/sudo/delivery/bootstrap",
+                "path": ".local/sudo/delivery/bootstrap.sops.json",
+                "storage": SOPS_AGE,
                 "ignored": True,
+            },
+            "forgejo_public_tls": {
+                "path": ".local/sudo/delivery/forgejo-public-tls.sops.json",
+                "storage": SOPS_AGE,
+                "ignored": True,
+            },
+            "age_key": {
+                "path": ".local/sudo/delivery/age-key.txt",
+                "storage": PLAINTEXT_AGE_IDENTITY,
+                "consumer": "SOPS_AGE_KEY_FILE",
+                "ignored": True,
+                "file_mode": "0600",
             },
             "runtime": {
                 "path": ".local/sudo/delivery/runtime",
+                "storage": SERVICE_GENERATED_PRIVATE_STATE,
+                "producer": "forgejo-after-bootstrap",
                 "ignored": True,
+                "directory_mode": "0700",
             },
         },
         "delivery private input boundary changed",
@@ -559,6 +580,7 @@ def validate_delivery_input_contract(
         == {
             "forgejo_bootstrap": {
                 "issuer": "sudo",
+                "storage": SOPS_AGE,
                 "deployment_target": "delivery-01",
                 "required_keys": [
                     "admin_username",
@@ -571,6 +593,7 @@ def validate_delivery_input_contract(
             },
             "forgejo_public_tls": {
                 "issuer": "sudo",
+                "storage": SOPS_AGE,
                 "deployment_target": "delivery-01",
                 "dns_sans": ["forgejo.shell.internal"],
                 "required_keys": ["certificate", "private_key", "root_ca"],
@@ -733,6 +756,32 @@ def validate_kubernetes_input_contract(repository_root: Path) -> None:
     )
 
 
+def validate_k3s_server_token_contract(repository_root: Path) -> None:
+    """Run the SUDO-owned server-token validator as part of the aggregate gate."""
+
+    script = resolve_repository_file(
+        repository_root / "sudo/scripts/generate_k3s_server_tokens.py",
+        repository_root=repository_root,
+        label="K3s server-token validator",
+    )
+    contract = resolve_repository_file(
+        repository_root / "sudo/secrets/k3s-server-token-contract.json",
+        repository_root=repository_root,
+        label="K3s server-token contract",
+    )
+    spec = importlib.util.spec_from_file_location(
+        "sudo_k3s_server_token_validator", script
+    )
+    if spec is None or spec.loader is None:
+        raise AccessContractError("cannot load K3s server-token validator")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        module.validate_contract(contract)
+    except (OSError, UnicodeError, ValueError) as error:
+        raise AccessContractError("K3s server-token contract is invalid") from error
+
+
 def validate_contracts(
     repository_root: Path = REPOSITORY_ROOT,
 ) -> dict[str, dict[str, Any]]:
@@ -753,6 +802,7 @@ def validate_contracts(
     validate_delivery_input_contract(repository_root)
     validate_kubernetes(documents["kubernetes"], repository_root)
     validate_kubernetes_input_contract(repository_root)
+    validate_k3s_server_token_contract(repository_root)
     return documents
 
 
@@ -762,7 +812,7 @@ def main() -> int:
     except AccessContractError as error:
         print(f"access contract validation failed: {error}", file=sys.stderr)
         return 2
-    print(f"validated {len(documents)} SUDO access profiles and 2 input contracts")
+    print(f"validated {len(documents)} SUDO access profiles and 3 handoff contracts")
     return 0
 
 

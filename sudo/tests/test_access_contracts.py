@@ -45,6 +45,8 @@ class TestAccessContracts(unittest.TestCase):
             "man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
             "sudo/secrets/kubernetes-ecosystem-input-contract.json",
             "sudo/pki/shell-offline-root.crt.pem",
+            "sudo/scripts/generate_k3s_server_tokens.py",
+            "sudo/secrets/k3s-server-token-contract.json",
         ):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +79,57 @@ class TestAccessContracts(unittest.TestCase):
             validator.AccessContractError, "cluster trust handoffs"
         ):
             validator.validate_kubernetes_input_contract(self.root)
+
+    def test_delivery_inputs_use_sops_age_without_plaintext_values(self) -> None:
+        validator.validate_delivery_input_contract(self.root)
+        path = self.root / "sudo/secrets/delivery-input-contract.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual("sops-age", document["private_custody"]["storage"])
+        self.assertFalse(document["private_custody"]["plaintext_values_tracked"])
+        self.assertEqual(
+            ".local/sudo/delivery/bootstrap.sops.json",
+            document["private_inputs"]["bootstrap"]["path"],
+        )
+        self.assertEqual(
+            ".local/sudo/delivery/forgejo-public-tls.sops.json",
+            document["private_inputs"]["forgejo_public_tls"]["path"],
+        )
+        self.assertEqual(
+            "plaintext-age-identity",
+            document["private_inputs"]["age_key"]["storage"],
+        )
+        self.assertEqual(
+            "SOPS_AGE_KEY_FILE",
+            document["private_inputs"]["age_key"]["consumer"],
+        )
+        self.assertEqual(
+            "service-generated-private-state",
+            document["private_inputs"]["runtime"]["storage"],
+        )
+        serialized = json.dumps(document)
+        self.assertNotRegex(
+            serialized,
+            r'"(?:admin_password|private_key|token)"\s*:',
+        )
+        self.assertNotIn("-----BEGIN", serialized)
+
+        document["private_custody"]["storage"] = validator.UNDECIDED
+        path.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "private custody"
+        ):
+            validator.validate_delivery_input_contract(self.root)
+
+    def test_aggregate_gate_validates_the_k3s_server_token_contract(self) -> None:
+        validator.validate_k3s_server_token_contract(self.root)
+        contract = self.root / "sudo/secrets/k3s-server-token-contract.json"
+        document = json.loads(contract.read_text(encoding="utf-8"))
+        document["storage"]["file_mode"] = "0644"
+        contract.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "server-token contract is invalid"
+        ):
+            validator.validate_k3s_server_token_contract(self.root)
 
     def test_rejects_unknown_fields_and_invalid_json(self) -> None:
         identity = self.altered("identity")
@@ -351,7 +404,7 @@ class TestAccessContracts(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(
             stdout.getvalue(),
-            "validated 4 SUDO access profiles and 2 input contracts\n",
+            "validated 4 SUDO access profiles and 3 handoff contracts\n",
         )
 
 
