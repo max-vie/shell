@@ -21,6 +21,8 @@ DELIVERY_APPROVAL := environment-gcp/make/forgejo-delivery
 DELIVERY_DEPLOY_PLAYBOOK := $(MAKE_ROOT)/forgejo/deploy-forgejo.yml
 DELIVERY_VERIFY_PLAYBOOK := $(MAKE_ROOT)/forgejo/verify-forgejo.yml
 DELIVERY_SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_delivery_supply.py
+RUNNER_REGISTER_SCRIPT := $(MAKE_ROOT)/scripts/register_forgejo_runner.py
+RUNNER_HANDOFF := $(REPOSITORY_ROOT)/.local/sudo/delivery/forgejo-runner.sops.json
 
 TRUST_VALIDATOR := $(MAKE_ROOT)/scripts/validate_cluster_trust.py
 INTERMEDIATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_cluster_intermediate.py
@@ -28,9 +30,9 @@ CERTIFICATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_consumer_certificate.py
 SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_kubernetes_supply.py
 TRUST_VALUES := $(MAKE_ROOT)/cert-manager/values.yaml
 
-.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify
+.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify
 
-check: test trust-preview forgejo-check
+check: test trust-preview runner-check
 
 test:
 	$(PYTHON) -m unittest discover -s $(MAKE_ROOT)/tests -p 'test_*.py'
@@ -81,15 +83,43 @@ forgejo-check: delivery-handoff-check
 	$(ANSIBLE_PLAYBOOK) --syntax-check -i "$(SYNTAX_INVENTORY)" "$(DELIVERY_VERIFY_PLAYBOOK)" -e make_delivery_vars_path="$(MAKE_DELIVERY_HANDOFF_ABS)"
 
 # The playbook's check-mode gate stops before SOPS decryption and guest writes.
-forgejo-preview: delivery-handoff
+forgejo-preview: delivery-handoff-validate
 	$(ANSIBLE_PLAYBOOK) --check $(DELIVERY_INVENTORY_ARGS) "$(DELIVERY_DEPLOY_PLAYBOOK)" -e make_delivery_vars_path="$(MAKE_DELIVERY_HANDOFF_ABS)"
 
 # Explicit mutation target for the already-prepared delivery host.
 forgejo-apply:
 	@test "$(APPROVAL)" = "$(DELIVERY_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/forgejo-delivery' >&2; exit 2; }
 	$(PYTHON) $(DELIVERY_HANDOFF_SCRIPT) --output "$(MAKE_DELIVERY_HANDOFF_ABS)"
+	$(PYTHON) $(DELIVERY_HANDOFF_SCRIPT) --validate --output "$(MAKE_DELIVERY_HANDOFF_ABS)"
 	$(ANSIBLE_PLAYBOOK) $(DELIVERY_INVENTORY_ARGS) "$(DELIVERY_DEPLOY_PLAYBOOK)" -e make_delivery_vars_path="$(MAKE_DELIVERY_HANDOFF_ABS)"
 
 # Read-only service and HTTPS verification target.
 forgejo-verify: delivery-handoff-validate
+	$(ANSIBLE_PLAYBOOK) $(DELIVERY_INVENTORY_ARGS) "$(DELIVERY_VERIFY_PLAYBOOK)" -e make_delivery_vars_path="$(MAKE_DELIVERY_HANDOFF_ABS)"
+
+# Runner checks remain source-only and do not require a private handoff.
+runner-check: forgejo-check
+	$(PYTHON) -m unittest $(MAKE_ROOT)/tests/test_register_forgejo_runner.py
+
+# Registration is the first target that may create external Forgejo state.
+runner-register:
+	@test "$(APPROVAL)" = "$(DELIVERY_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/forgejo-delivery' >&2; exit 2; }
+	$(PYTHON) "$(RUNNER_REGISTER_SCRIPT)" \
+		--age-key "$(REPOSITORY_ROOT)/.local/sudo/delivery/age-key.txt" \
+		--runner-sops "$(RUNNER_HANDOFF)" \
+		--inventory "$(INIT_DELIVERY_INVENTORY)" \
+		--inventory "$(INIT_CONNECTION_INVENTORY)" \
+		--approval "$(APPROVAL)"
+
+# Deploy the runner only after the encrypted registration handoff exists.
+runner-apply:
+	@test "$(APPROVAL)" = "$(DELIVERY_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/forgejo-delivery' >&2; exit 2; }
+	$(PYTHON) "$(RUNNER_REGISTER_SCRIPT)" --validate-only --runner-sops "$(RUNNER_HANDOFF)" --age-key "$(REPOSITORY_ROOT)/.local/sudo/delivery/age-key.txt"
+	$(PYTHON) $(DELIVERY_HANDOFF_SCRIPT) --output "$(MAKE_DELIVERY_HANDOFF_ABS)"
+	$(PYTHON) $(DELIVERY_HANDOFF_SCRIPT) --validate --output "$(MAKE_DELIVERY_HANDOFF_ABS)"
+	$(ANSIBLE_PLAYBOOK) $(DELIVERY_INVENTORY_ARGS) "$(DELIVERY_DEPLOY_PLAYBOOK)" -e make_delivery_vars_path="$(MAKE_DELIVERY_HANDOFF_ABS)"
+
+# Runner verification is read-only and shares the delivery service verifier.
+runner-verify: delivery-handoff-validate
+	$(PYTHON) "$(RUNNER_REGISTER_SCRIPT)" --validate-only --runner-sops "$(RUNNER_HANDOFF)" --age-key "$(REPOSITORY_ROOT)/.local/sudo/delivery/age-key.txt"
 	$(ANSIBLE_PLAYBOOK) $(DELIVERY_INVENTORY_ARGS) "$(DELIVERY_VERIFY_PLAYBOOK)" -e make_delivery_vars_path="$(MAKE_DELIVERY_HANDOFF_ABS)"

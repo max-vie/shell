@@ -1,4 +1,5 @@
 ---
+# yamllint disable rule:line-length
 # Read-only verification for the MAKE-managed Forgejo and Caddy services.
 # This playbook requires delivery-01 to be running and never decrypts SUDO
 # handoffs or changes the guest.
@@ -33,6 +34,30 @@
       become: false
       run_once: true
 
+    - name: Inspect the optional runner handoff
+      ansible.builtin.stat:
+        path: "{{ make_delivery.sudo_forgejo_runner_path }}"
+        follow: false
+      delegate_to: localhost
+      become: false
+      register: make_runner_handoff_stat
+      run_once: true
+
+    - name: Require a safe runner handoff when runner verification is enabled
+      ansible.builtin.assert:
+        that:
+          - >-
+            not make_runner_handoff_stat.stat.exists
+            or (
+            make_runner_handoff_stat.stat.isreg | default(false)
+            and not make_runner_handoff_stat.stat.islnk | default(false)
+            and make_runner_handoff_stat.stat.mode == '0600'
+            )
+        fail_msg: The runner SOPS handoff must be a regular mode-0600 file.
+      delegate_to: localhost
+      become: false
+      run_once: true
+
     - name: Require the fixed delivery target and HTTPS boundary
       ansible.builtin.assert:
         that:
@@ -50,6 +75,18 @@
           - make_delivery_supply.contract_id == 'delivery-supply'
           - make_delivery_supply.proof_status == 'source-reference-only'
           - make_delivery_supply.runtime_image_platform == 'linux/amd64'
+          - >-
+            make_delivery_supply.images.forgejo_runner.repository ==
+            'data.forgejo.org/forgejo/runner'
+          - make_delivery_supply.images.forgejo_runner.tag == '13'
+          - >-
+            make_delivery_supply.images.forgejo_runner.digest ==
+            'sha256:7fb853bfe73c229be6349398359c0a7bd01fadfd17c106607b2221150b799ed2'
+          - make_delivery_supply.images.node.repository == 'docker.io/library/node'
+          - make_delivery_supply.images.node.tag == '24-bookworm'
+          - >-
+            make_delivery_supply.images.node.digest ==
+            'sha256:4196d66a565c6f195728d9952f161f4adfe2ad753052a08b7ec7f1c5a6bda42b'
       tags: [always]
 
   tasks:
@@ -98,11 +135,53 @@
       changed_when: false
       register: make_caddy_service
 
-    - name: Require both delivery services to be active
+    - name: Read the runner user service state
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - --user
+          - shell-delivery
+          - --
+          - env
+          - HOME=/home/shell-delivery
+          - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+          - systemctl
+          - --user
+          - is-active
+          - runner.service
+      changed_when: false
+      register: make_runner_service
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Read the rootless Podman socket service state
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - --user
+          - shell-delivery
+          - --
+          - env
+          - HOME=/home/shell-delivery
+          - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+          - systemctl
+          - --user
+          - is-active
+          - podman.socket
+      changed_when: false
+      register: make_podman_socket_service
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Require the delivery services to be active
       ansible.builtin.assert:
         that:
           - make_forgejo_service.stdout.strip() == 'active'
           - make_caddy_service.stdout.strip() == 'active'
+          - >-
+            not make_runner_handoff_stat.stat.exists
+            or make_runner_service.stdout.strip() == 'active'
+          - >-
+            not make_runner_handoff_stat.stat.exists
+            or make_podman_socket_service.stdout.strip() == 'active'
 
     - name: Read the rootless Podman containers
       ansible.builtin.command:
@@ -122,11 +201,75 @@
       register: make_delivery_containers
       no_log: true
 
-    - name: Require the two fixed service containers
+    - name: Require the fixed service containers
       ansible.builtin.assert:
         that:
           - "'forgejo ' in make_delivery_containers.stdout"
           - "'caddy ' in make_delivery_containers.stdout"
+          - >-
+            not make_runner_handoff_stat.stat.exists
+            or 'runner ' in make_delivery_containers.stdout
+
+    - name: Read the runner container runtime configuration
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - --user
+          - shell-delivery
+          - --
+          - env
+          - HOME=/home/shell-delivery
+          - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+          - podman
+          - container
+          - inspect
+          - runner
+      changed_when: false
+      register: make_runner_inspect_raw
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Parse the runner container runtime configuration
+      ansible.builtin.set_fact:
+        make_runner_inspect: "{{ (make_runner_inspect_raw.stdout | from_json)[0] }}"
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Require the runner runtime network and mount boundaries
+      ansible.builtin.assert:
+        that:
+          - >-
+            make_runner_inspect.ImageDigest ==
+            make_delivery_supply.images.forgejo_runner.digest
+          - make_runner_inspect.HostConfig.NetworkMode == 'host'
+          - >-
+            'DOCKER_HOST=unix:///run/podman/podman.sock' in
+            make_runner_inspect.Config.Env
+          - >-
+            ['/data'] ==
+            (make_runner_inspect.Mounts |
+            selectattr('Source', 'equalto',
+            '/srv/shell-delivery/forgejo-runner') |
+            map(attribute='Destination') | list)
+          - >-
+            ['/run/podman/podman.sock'] ==
+            (make_runner_inspect.Mounts |
+            selectattr('Destination', 'equalto',
+            '/run/podman/podman.sock') |
+            map(attribute='Destination') | list)
+          - >-
+            ((make_runner_inspect.Mounts |
+            selectattr('Destination', 'equalto',
+            '/run/podman/podman.sock') |
+            map(attribute='Source') | first) is
+            match('^/run/user/[0-9]+/podman/podman\.sock$'))
+          - >-
+            ['/etc/ssl/certs/shell-platform-ca.crt'] ==
+            (make_runner_inspect.Mounts |
+            selectattr('Destination', 'equalto',
+            '/etc/ssl/certs/shell-platform-ca.crt') |
+            map(attribute='Destination') | list)
+          - >-
+            'docker.sock' not in (make_runner_inspect | to_json)
+      when: make_runner_handoff_stat.stat.exists
 
     - name: Verify the HTTPS endpoint with the public root CA
       ansible.builtin.command:
@@ -226,6 +369,71 @@
           - not make_secret_file.stat.islnk | default(false)
           - make_secret_file.stat.mode == '0600'
 
+    - name: Read the runner configuration file state
+      ansible.builtin.stat:
+        path: /srv/shell-delivery/forgejo-runner/config.yml
+        follow: false
+      register: make_runner_config_state
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Require a regular non-symlink runner configuration
+      ansible.builtin.assert:
+        that:
+          - make_runner_config_state.stat.isreg | default(false)
+          - not make_runner_config_state.stat.islnk | default(false)
+          - make_runner_config_state.stat.mode == '0644'
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Read the runner registration file state
+      ansible.builtin.stat:
+        path: /srv/shell-delivery/forgejo-runner/.runner
+        follow: false
+      register: make_runner_registration_state
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Require a private runner registration file
+      ansible.builtin.assert:
+        that:
+          - make_runner_registration_state.stat.isreg | default(false)
+          - not make_runner_registration_state.stat.islnk | default(false)
+          - make_runner_registration_state.stat.mode == '0600'
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Read rootless container ownership through the user namespace
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - --user
+          - shell-delivery
+          - --
+          - env
+          - HOME=/home/shell-delivery
+          - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+          - podman
+          - unshare
+          - stat
+          - "--format=%u:%g"
+          - "{{ item }}"
+      loop:
+        - /srv/shell-delivery/forgejo
+        - /srv/shell-delivery/forgejo-runner
+        - /srv/shell-delivery/forgejo-runner/config.yml
+        - /srv/shell-delivery/forgejo-runner/.runner
+      when:
+        - item == '/srv/shell-delivery/forgejo'
+          or make_runner_handoff_stat.stat.exists
+      changed_when: false
+      register: make_rootless_ownership
+
+    - name: Require the mapped container owner for rootless data
+      ansible.builtin.assert:
+        that:
+          - item.stdout | trim == '1000:1000'
+      loop: "{{ make_rootless_ownership.results }}"
+      when: not item.skipped | default(false)
+      loop_control:
+        label: "{{ item.item }}"
+
     - name: Read the rootless Quadlet unit file states
       ansible.builtin.stat:
         path: "/home/shell-delivery/.config/containers/systemd/{{ item }}"
@@ -233,6 +441,13 @@
         - forgejo.container
         - caddy.container
       register: make_quadlet_files
+
+    - name: Read the runner Quadlet unit state
+      ansible.builtin.stat:
+        path: /home/shell-delivery/.config/containers/systemd/runner.container
+        follow: false
+      register: make_runner_quadlet_state
+      when: make_runner_handoff_stat.stat.exists
 
     - name: Require regular non-symlink Quadlet units with mode 0644
       ansible.builtin.assert:
@@ -244,6 +459,14 @@
       loop_control:
         label: >-
           /home/shell-delivery/.config/containers/systemd/{{ item.item }}
+
+    - name: Require a regular non-symlink runner Quadlet unit
+      ansible.builtin.assert:
+        that:
+          - make_runner_quadlet_state.stat.isreg | default(false)
+          - not make_runner_quadlet_state.stat.islnk | default(false)
+          - make_runner_quadlet_state.stat.mode == '0644'
+      when: make_runner_handoff_stat.stat.exists
 
     - name: Read the rootless Quadlet unit contents
       ansible.builtin.slurp:
@@ -280,3 +503,62 @@
       loop: "{{ make_quadlet_contents.results }}"
       loop_control:
         label: "{{ item.item.path }}"
+
+    - name: Read the runner Quadlet unit
+      ansible.builtin.slurp:
+        path: /home/shell-delivery/.config/containers/systemd/runner.container
+      register: make_runner_quadlet_content
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Require the digest-pinned rootless runner Quadlet
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('Image=' ~ make_delivery_supply.images.forgejo_runner.repository ~
+            ':' ~ make_delivery_supply.images.forgejo_runner.tag ~ '@' ~
+            make_delivery_supply.images.forgejo_runner.digest) in
+            (make_runner_quadlet_content.content | b64decode)
+          - >-
+            'ContainerName=runner' in
+            (make_runner_quadlet_content.content | b64decode)
+          - >-
+            'Network=host' in
+            (make_runner_quadlet_content.content | b64decode)
+          - >-
+            'Volume=/run/user/' in
+            (make_runner_quadlet_content.content | b64decode)
+          - >-
+            'Volume=/run/podman/podman.sock' in
+            (make_runner_quadlet_content.content | b64decode)
+          - >-
+            'Environment=DOCKER_HOST=unix:///run/podman/podman.sock' in
+            (make_runner_quadlet_content.content | b64decode)
+          - >-
+            'Label=shell.platform/service=runner' in
+            (make_runner_quadlet_content.content | b64decode)
+          - >-
+            'docker.sock' not in
+            (make_runner_quadlet_content.content | b64decode)
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Read the runner configuration contents
+      ansible.builtin.slurp:
+        path: /srv/shell-delivery/forgejo-runner/config.yml
+      register: make_runner_config_content
+      when: make_runner_handoff_stat.stat.exists
+
+    - name: Require the runner job image and socket boundary
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('docker:docker://' ~ make_delivery_supply.images.node.repository ~
+            ':' ~ make_delivery_supply.images.node.tag ~ '@' ~
+            make_delivery_supply.images.node.digest) in
+            (make_runner_config_content.content | b64decode)
+          - >-
+            'docker_host: "-"' in
+            (make_runner_config_content.content | b64decode)
+          - >-
+            '/run/podman/podman.sock' not in
+            (make_runner_config_content.content | b64decode)
+      when: make_runner_handoff_stat.stat.exists

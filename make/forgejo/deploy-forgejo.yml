@@ -9,6 +9,10 @@
   vars:
     make_forgejo_repository: codeberg.org/forgejo/forgejo
     make_forgejo_tag: 16.0.3-rootless
+    make_runner_repository: data.forgejo.org/forgejo/runner
+    make_runner_tag: "13"
+    make_runner_job_repository: docker.io/library/node
+    make_runner_job_tag: 24-bookworm
     make_caddy_repository: docker.io/library/caddy
     make_caddy_tag: 2.11.4-alpine
     make_service_user: shell-delivery
@@ -17,6 +21,10 @@
     make_forgejo_admin_environment_file: >-
       {{ make_quadlet_directory }}/forgejo-admin.env
     make_service_root: /srv/shell-delivery
+    make_runner_root: "{{ make_service_root }}/forgejo-runner"
+    make_runner_config_file: "{{ make_runner_root }}/config.yml"
+    make_runner_registration_file: "{{ make_runner_root }}/.runner"
+    make_runner_socket: /run/podman/podman.sock
   pre_tasks:
     - name: Load the path-only MAKE delivery handoff
       ansible.builtin.include_vars:
@@ -52,9 +60,50 @@
       become: false
       run_once: true
 
+    - name: Inspect the optional runner handoff before host mutation
+      ansible.builtin.stat:
+        path: "{{ make_delivery.sudo_forgejo_runner_path }}"
+        follow: false
+      delegate_to: localhost
+      become: false
+      register: make_runner_handoff_stat
+      run_once: true
+
+    - name: Reject an unsafe runner handoff before host mutation
+      ansible.builtin.assert:
+        that:
+          - >-
+            not make_runner_handoff_stat.stat.exists
+            or (
+            make_runner_handoff_stat.stat.isreg | default(false)
+            and not make_runner_handoff_stat.stat.islnk | default(false)
+            and make_runner_handoff_stat.stat.mode == '0600'
+            )
+        fail_msg: >-
+          The optional runner SOPS handoff must be a regular mode-0600 file.
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Read the optional runner handoff once before host mutation
+      ansible.builtin.slurp:
+        path: "{{ make_delivery.sudo_forgejo_runner_path }}"
+      delegate_to: localhost
+      become: false
+      register: make_runner_handoff_ciphertext
+      run_once: true
+      no_log: true
+      when: make_runner_handoff_stat.stat.exists
+
     - name: Require the fixed delivery handoff and image pins
       ansible.builtin.assert:
         that:
+          - inventory_hostname == 'delivery-01'
+          - ansible_host == '10.77.0.211'
+          - shell_expected_address == '10.77.0.211'
+          - shell_role | default('') == 'delivery'
+          - shell_cluster | default('') == 'shared'
+          - shell_transport | default('') == 'gcp_iap'
           - make_delivery.proof_status == 'source-only'
           - make_delivery.service_node_id == 'delivery-01'
           - make_delivery.service_dns_domain == 'shell.internal'
@@ -86,6 +135,20 @@
           - >-
             make_delivery_supply.images.caddy.digest ==
             'sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648'
+          - >-
+            make_delivery_supply.images.forgejo_runner.repository ==
+            make_runner_repository
+          - make_delivery_supply.images.forgejo_runner.tag == make_runner_tag
+          - >-
+            make_delivery_supply.images.forgejo_runner.digest ==
+            'sha256:7fb853bfe73c229be6349398359c0a7bd01fadfd17c106607b2221150b799ed2'
+          - >-
+            make_delivery_supply.images.node.repository ==
+            make_runner_job_repository
+          - make_delivery_supply.images.node.tag == make_runner_job_tag
+          - >-
+            make_delivery_supply.images.node.digest ==
+            'sha256:4196d66a565c6f195728d9952f161f4adfe2ad753052a08b7ec7f1c5a6bda42b'
           - make_delivery_inputs.proof_status == 'source-only'
           - make_delivery_inputs.private_custody.storage == 'sops-age'
           - >-
@@ -97,6 +160,12 @@
           - >-
             make_delivery_inputs.private_inputs.forgejo_public_tls.path ==
             '.local/sudo/delivery/forgejo-public-tls.sops.json'
+          - >-
+            make_delivery_inputs.private_inputs.forgejo_runner.path ==
+            '.local/sudo/delivery/forgejo-runner.sops.json'
+          - >-
+            make_delivery_inputs.private_inputs.forgejo_runner.storage ==
+            'sops-age'
         fail_msg: The delivery handoff, SUDO inputs, or TAR image pins changed.
       delegate_to: localhost
       become: false
@@ -111,10 +180,6 @@
   tasks:
     - name: Deploy the rootless delivery services
       block:
-        - name: Mark the delivery mutation as started
-          ansible.builtin.set_fact:
-            make_delivery_mutation_started: true
-
         - name: Read the fixed rootless service account UID
           ansible.builtin.command:
             argv: [id, -u, "{{ make_service_user }}"]
@@ -177,6 +242,34 @@
               {{ make_forgejo_tls.forgejo_public_tls }}
           no_log: true
 
+        - name: Decrypt the optional runner registration handoff
+          ansible.builtin.command:
+            argv:
+              - sops
+              - --decrypt
+              - --input-type
+              - json
+              - --output-type
+              - json
+              - /dev/stdin
+            stdin: "{{ make_runner_handoff_ciphertext.content | b64decode }}"
+            stdin_add_newline: false
+          environment:
+            SOPS_AGE_KEY_FILE: "{{ make_delivery.age_key_path }}"
+          register: make_runner_raw
+          changed_when: false
+          check_mode: false
+          no_log: true
+          delegate_to: localhost
+          become: false
+          when: make_runner_handoff_stat.stat.exists
+
+        - name: Parse the optional runner handoff in memory
+          ansible.builtin.set_fact:
+            make_runner_secret: "{{ make_runner_raw.stdout | from_json }}"
+          no_log: true
+          when: make_runner_handoff_stat.stat.exists
+
         - name: Require the Forgejo bootstrap and TLS input shapes
           ansible.builtin.assert:
             that:
@@ -198,6 +291,39 @@
             fail_msg: The decrypted Forgejo input shape does not match SUDO.
           no_log: true
 
+        - name: Require the optional runner handoff shape
+          ansible.builtin.assert:
+            that:
+              - make_runner_secret.schema_version == '1.0'
+              - make_runner_secret.contract_id == 'delivery-input-contract'
+              - make_runner_secret.class == 'forgejo_runner'
+              - make_runner_secret.issuer == 'forgejo-after-bootstrap'
+              - make_runner_secret.deployment_target == 'delivery-01'
+              - make_runner_secret.one_time_bootstrap == true
+              - >-
+                make_runner_secret.forgejo_runner.url ==
+                'https://forgejo.shell.internal'
+              - >-
+                make_runner_secret.forgejo_runner.name ==
+                'shell-runner-01'
+              - make_runner_secret.forgejo_runner.uuid | length > 0
+              - make_runner_secret.forgejo_runner.token | length > 20
+              - >-
+                make_runner_secret.forgejo_runner.runner_config.address
+                is string
+              - >-
+                make_runner_secret.forgejo_runner.runner_config.address
+                is match('^https://forgejo\\.shell\\.internal')
+              - >-
+                make_runner_secret.forgejo_runner.runner_config.uuid ==
+                make_runner_secret.forgejo_runner.uuid
+              - >-
+                make_runner_secret.forgejo_runner.runner_config.token ==
+                make_runner_secret.forgejo_runner.token
+            fail_msg: The decrypted runner handoff does not match SUDO.
+          no_log: true
+          when: make_runner_handoff_stat.stat.exists
+
         - name: Bind the fixed image references and service input values
           ansible.builtin.set_fact:
             make_forgejo_image: >-
@@ -206,6 +332,12 @@
             make_caddy_image: >-
               {{ make_caddy_repository }}:{{ make_caddy_tag }}@
               {{ make_delivery_supply.images.caddy.digest }}
+            make_runner_image: >-
+              {{ make_runner_repository }}:{{ make_runner_tag }}@
+              {{ make_delivery_supply.images.forgejo_runner.digest }}
+            make_runner_job_image: >-
+              {{ make_runner_job_repository }}:{{ make_runner_job_tag }}@
+              {{ make_delivery_supply.images.node.digest }}
             make_forgejo_secret_key: >-
               {{ make_forgejo_bootstrap_values.security_secret_key }}
             make_internal_token: >-
@@ -223,6 +355,116 @@
             make_forgejo_tls_root_ca: >-
               {{ make_forgejo_tls_values.root_ca }}
           no_log: true
+
+        - name: Read the pre-deployment sysctl file state
+          ansible.builtin.stat:
+            path: /etc/sysctl.d/90-shell-rootless-bind.conf
+            follow: false
+          register: make_previous_sysctl_file
+
+        - name: Read the pre-deployment sysctl file contents
+          ansible.builtin.slurp:
+            path: /etc/sysctl.d/90-shell-rootless-bind.conf
+          register: make_previous_sysctl_contents
+          when:
+            - make_previous_sysctl_file is defined
+            - make_previous_sysctl_file.stat.exists
+
+        - name: Read the pre-deployment root CA file state
+          ansible.builtin.stat:
+            path: /usr/local/share/ca-certificates/shell-platform-ca.crt
+            follow: false
+          register: make_previous_root_ca_file
+
+        - name: Read the pre-deployment root CA file contents
+          ansible.builtin.slurp:
+            path: /usr/local/share/ca-certificates/shell-platform-ca.crt
+          register: make_previous_root_ca_contents
+          when: make_previous_root_ca_file.stat.exists
+
+        - name: Read the pre-deployment unprivileged port boundary
+          ansible.builtin.command:
+            argv: [sysctl, --values, net.ipv4.ip_unprivileged_port_start]
+          changed_when: false
+          register: make_previous_unprivileged_port_start
+
+        - name: Read the pre-deployment Podman socket enablement
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - is-enabled
+              - podman.socket
+          changed_when: false
+          failed_when: false
+          register: make_previous_podman_socket_enabled
+          when: make_runner_handoff_stat.stat.exists
+
+        - name: Read the pre-deployment Podman socket state
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - is-active
+              - podman.socket
+          changed_when: false
+          failed_when: false
+          register: make_previous_podman_socket_active
+          when: make_runner_handoff_stat.stat.exists
+
+        - name: Read the pre-deployment container restore enablement
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - is-enabled
+              - podman-restart.service
+          changed_when: false
+          failed_when: false
+          register: make_previous_podman_restart_enabled
+
+        - name: Read the pre-deployment container restore state
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - is-active
+              - podman-restart.service
+          changed_when: false
+          failed_when: false
+          register: make_previous_podman_restart_active
+
+        - name: Mark the delivery mutation as started
+          ansible.builtin.set_fact:
+            make_delivery_mutation_started: true
 
         - name: Allow rootless Caddy to bind the HTTPS port
           ansible.builtin.copy:
@@ -280,9 +522,18 @@
           ansible.builtin.file:
             path: "{{ make_service_root }}/forgejo"
             state: directory
-            owner: "200999"
-            group: "200999"
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
             mode: "0750"
+
+        - name: Create the rootless runner data directory
+          ansible.builtin.file:
+            path: "{{ make_runner_root }}"
+            state: directory
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0750"
+          when: make_runner_handoff_stat.stat.exists
 
         - name: Create the Forgejo TLS directory
           ansible.builtin.file:
@@ -364,6 +615,142 @@
             group: "{{ make_service_user }}"
             mode: "0644"
 
+        - name: Enable the rootless Podman API socket for the runner
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - enable
+              - --now
+              - podman.socket
+          changed_when: false
+          when: make_runner_handoff_stat.stat.exists
+
+        # yamllint disable rule:line-length
+        - name: Write the runner configuration
+          ansible.builtin.copy:
+            dest: "{{ make_runner_config_file }}"
+            content: |
+              log:
+                level: info
+                job_level: info
+              runner:
+                file: /data/.runner
+                capacity: 1
+                timeout: 30m
+                shutdown_timeout: 1m
+                insecure: false
+                labels:
+                  - docker:docker://{{ make_runner_job_image }}
+                envs:
+                  SSL_CERT_FILE: /usr/local/share/ca-certificates/shell-platform-ca.crt
+              cache:
+                enabled: true
+                dir: /data/cache
+              container:
+                network: ""
+                docker_host: "-"
+                valid_volumes:
+                  - /usr/local/share/ca-certificates/shell-platform-ca.crt
+                options: >-
+                  --volume /usr/local/share/ca-certificates/shell-platform-ca.crt:
+                  /etc/ssl/certs/ca-certificates.crt:ro
+              host:
+                workdir_parent: /data/workspaces
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0644"
+          when: make_runner_handoff_stat.stat.exists
+
+        - name: Write the registered runner state
+          ansible.builtin.copy:
+            dest: "{{ make_runner_registration_file }}"
+            content: "{{ make_runner_secret.forgejo_runner.runner_config | to_json }}\n"
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0600"
+          no_log: true
+          when: make_runner_handoff_stat.stat.exists
+
+        - name: Map the Forgejo data owner through the rootless user namespace
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - unshare
+              - chown
+              - "1000:1000"
+              - "{{ make_service_root }}/forgejo"
+          changed_when: false
+
+        - name: Map the runner inputs through the rootless user namespace
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - unshare
+              - chown
+              - "1000:1000"
+              - "{{ make_runner_root }}"
+              - "{{ make_runner_config_file }}"
+              - "{{ make_runner_registration_file }}"
+          changed_when: false
+          when: make_runner_handoff_stat.stat.exists
+
+        - name: Write the runner Quadlet unit
+          ansible.builtin.copy:
+            dest: "{{ make_quadlet_directory }}/runner.container"
+            content: |
+              [Unit]
+              Description=Forgejo Actions runner
+              After=forgejo.service podman.socket
+              Wants=forgejo.service podman.socket
+
+              [Container]
+              Image={{ make_runner_image }}
+              ContainerName=runner
+              Network=host
+              UserNS=keep-id
+              Volume={{ make_runner_root }}:/data
+              Volume=/run/user/{{ make_service_uid.stdout | trim }}/podman/podman.sock:{{ make_runner_socket }}
+              Volume=/usr/local/share/ca-certificates/shell-platform-ca.crt:/etc/ssl/certs/shell-platform-ca.crt:ro
+              Environment=DOCKER_HOST=unix://{{ make_runner_socket }}
+              Environment=SSL_CERT_FILE=/etc/ssl/certs/shell-platform-ca.crt
+              Exec=/bin/forgejo-runner daemon --config /data/config.yml
+              Label=shell.platform/owner=make
+              Label=shell.platform/service=runner
+
+              [Service]
+              Restart=on-failure
+
+              [Install]
+              WantedBy=default.target
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0644"
+          when: make_runner_handoff_stat.stat.exists
+
+        # yamllint enable rule:line-length
+
         - name: Write the Caddy Quadlet unit
           ansible.builtin.copy:
             dest: "{{ make_quadlet_directory }}/caddy.container"
@@ -422,6 +809,38 @@
               - pull
               - "{{ make_caddy_image }}"
           changed_when: false
+
+        - name: Pull the pinned Forgejo runner image
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - pull
+              - "{{ make_runner_image }}"
+          changed_when: false
+          when: make_runner_handoff_stat.stat.exists
+
+        - name: Pull the pinned runner job image
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - pull
+              - "{{ make_runner_job_image }}"
+          changed_when: false
+          when: make_runner_handoff_stat.stat.exists
 
         - name: Reload the rootless user systemd manager
           ansible.builtin.command:
@@ -511,6 +930,29 @@
           ansible.builtin.set_fact:
             make_delivery_services_started: true
 
+        - name: Mark the runner mutation as started
+          ansible.builtin.set_fact:
+            make_runner_started: true
+          when: make_runner_handoff_stat.stat.exists
+
+        - name: Start the Forgejo Actions runner service
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - restart
+              - runner.service
+          changed_when: false
+          when: make_runner_handoff_stat.stat.exists
+          register: make_runner_start
+
         - name: Wait for the Forgejo HTTPS endpoint
           ansible.builtin.command:
             argv:
@@ -540,6 +982,10 @@
             mode: "0600"
           no_log: true
 
+        # Forgejo 16 accepts a chosen administrator password only through its
+        # --password flag. The short-lived env file keeps it out of the host
+        # Ansible and Podman argv, but a privileged in-container observer can
+        # still inspect the Forgejo process argv during this bootstrap step.
         - name: Ensure the Forgejo administrator exists
           ansible.builtin.command:
             argv:
@@ -567,7 +1013,10 @@
               - "{{ make_forgejo_admin_username }}"
           register: make_admin_create
           changed_when: false
-          failed_when: make_admin_create.rc not in [0, 1]
+          failed_when: >-
+            make_admin_create.rc not in [0, 1]
+            or (make_admin_create.rc == 1
+            and 'already exists' not in make_admin_create.stderr | lower)
           no_log: true
 
         - name: Remove the short-lived Forgejo administrator input
@@ -577,6 +1026,24 @@
           no_log: true
 
       rescue:
+        - name: Stop the runner after an incomplete runner mutation
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - stop
+              - runner.service
+          when: make_runner_started | default(false)
+          changed_when: false
+          failed_when: false
+
         - name: Stop services after an incomplete delivery mutation
           ansible.builtin.command:
             argv:
@@ -605,6 +1072,14 @@
             - "{{ make_quadlet_directory }}/caddy.container"
           when: make_delivery_mutation_started | default(false)
 
+        - name: Remove the generated runner unit after runner failure
+          ansible.builtin.file:
+            path: "{{ make_quadlet_directory }}/runner.container"
+            state: absent
+          when:
+            - make_delivery_mutation_started | default(false)
+            - make_runner_handoff_stat.stat.exists
+
         - name: Remove only the generated secret and TLS files after failure
           ansible.builtin.file:
             path: "{{ item }}"
@@ -617,6 +1092,190 @@
             - "{{ make_service_root }}/forgejo-tls/ca.crt"
           when: make_delivery_mutation_started | default(false)
           no_log: true
+
+        - name: Remove generated runner inputs after runner failure
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ make_runner_config_file }}"
+            - "{{ make_runner_registration_file }}"
+          when:
+            - make_delivery_mutation_started | default(false)
+            - make_runner_handoff_stat.stat.exists
+          no_log: true
+
+        - name: Reload the user manager after removing generated units
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - daemon-reload
+          when: make_delivery_mutation_started | default(false)
+          changed_when: false
+          failed_when: false
+
+        - name: Remove the delivery network created by the failed run
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - network
+              - rm
+              - forgejo-net
+          when:
+            - make_network_exists is defined
+            - make_network_exists.rc == 1
+          changed_when: false
+          failed_when: false
+
+        - name: Stop the Podman socket started by the failed run
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - stop
+              - podman.socket
+          when:
+            - make_previous_podman_socket_active is defined
+            - make_previous_podman_socket_active.stdout | trim != 'active'
+          changed_when: false
+          failed_when: false
+
+        - name: Disable the Podman socket enabled by the failed run
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - disable
+              - podman.socket
+          when:
+            - make_previous_podman_socket_enabled is defined
+            - make_previous_podman_socket_enabled.stdout | trim != 'enabled'
+          changed_when: false
+          failed_when: false
+
+        - name: Stop the container restore service started by the failed run
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - stop
+              - podman-restart.service
+          when:
+            - make_previous_podman_restart_active is defined
+            - make_previous_podman_restart_active.stdout | trim != 'active'
+          changed_when: false
+          failed_when: false
+
+        - name: Disable the container restore service enabled by the failed run
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - disable
+              - podman-restart.service
+          when:
+            - make_previous_podman_restart_enabled is defined
+            - make_previous_podman_restart_enabled.stdout | trim != 'enabled'
+          changed_when: false
+          failed_when: false
+
+        - name: Restore the previous rootless-bind sysctl file
+          ansible.builtin.copy:
+            dest: /etc/sysctl.d/90-shell-rootless-bind.conf
+            content: "{{ make_previous_sysctl_contents.content | b64decode }}"
+            owner: "{{ make_previous_sysctl_file.stat.pw_name }}"
+            group: "{{ make_previous_sysctl_file.stat.gr_name }}"
+            mode: "{{ make_previous_sysctl_file.stat.mode }}"
+          when: make_previous_sysctl_file.stat.exists
+
+        - name: Remove the rootless-bind sysctl file created by the failed run
+          ansible.builtin.file:
+            path: /etc/sysctl.d/90-shell-rootless-bind.conf
+            state: absent
+          when:
+            - make_previous_sysctl_file is defined
+            - not make_previous_sysctl_file.stat.exists
+
+        - name: Restore the previous unprivileged port boundary
+          ansible.builtin.command:
+            argv:
+              - sysctl
+              - --write
+              - >-
+                net.ipv4.ip_unprivileged_port_start={{
+                make_previous_unprivileged_port_start.stdout | trim }}
+          changed_when: false
+          failed_when: false
+          when: make_previous_unprivileged_port_start is defined
+
+        - name: Restore the previous public root CA file
+          ansible.builtin.copy:
+            dest: /usr/local/share/ca-certificates/shell-platform-ca.crt
+            content: "{{ make_previous_root_ca_contents.content | b64decode }}"
+            owner: "{{ make_previous_root_ca_file.stat.pw_name }}"
+            group: "{{ make_previous_root_ca_file.stat.gr_name }}"
+            mode: "{{ make_previous_root_ca_file.stat.mode }}"
+          when:
+            - make_previous_root_ca_file is defined
+            - make_previous_root_ca_file.stat.exists
+
+        - name: Remove the public root CA file created by the failed run
+          ansible.builtin.file:
+            path: /usr/local/share/ca-certificates/shell-platform-ca.crt
+            state: absent
+          when:
+            - make_previous_root_ca_file is defined
+            - not make_previous_root_ca_file.stat.exists
+
+        - name: Refresh the CA bundle after restoring the previous state
+          ansible.builtin.command:
+            argv: [update-ca-certificates]
+          changed_when: false
+          failed_when: false
+          when: make_previous_root_ca_file is defined
 
         - name: Fail the delivery play after cleanup
           ansible.builtin.fail:
