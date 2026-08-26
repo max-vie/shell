@@ -38,6 +38,10 @@ class TestAccessContracts(unittest.TestCase):
         for relative in (
             "init/ansible/playbooks/configure-identity-service.yml",
             "init/ansible/playbooks/configure-delivery-node.yml",
+            "sudo/secrets/delivery-input-contract.json",
+            "tar/manifests/delivery-supply.json",
+            "make/contracts/service-node-handoff-requirements.json",
+            "man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
         ):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +79,17 @@ class TestAccessContracts(unittest.TestCase):
         delivery_path = self.access_root / validator.CONTRACT_FILES["delivery"]
         delivery_path.write_text(
             '{"schema_version":"0","schema_version":"1.0"}',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "duplicate JSON key"
+        ):
+            validator.validate_contracts(self.root)
+
+        self.write("delivery", self.documents["delivery"])
+        delivery_input = self.root / "sudo/secrets/delivery-input-contract.json"
+        delivery_input.write_text(
+            '{"schema_version":"1.0","schema_version":"1.0"}',
             encoding="utf-8",
         )
         with self.assertRaisesRegex(
@@ -126,6 +141,57 @@ class TestAccessContracts(unittest.TestCase):
         identity["cluster_scope"] = ["gcp"]
         self.write("identity", identity)
         with self.assertRaisesRegex(validator.AccessContractError, "cluster scope"):
+            validator.validate_contracts(self.root)
+
+    def test_rejects_changed_identity_and_delivery_service_policy(self) -> None:
+        freeipa = self.altered("freeipa")
+        freeipa["identity"]["realm"] = "OTHER.INTERNAL"  # type: ignore[index]
+        self.write("freeipa", freeipa)
+        with self.assertRaisesRegex(validator.AccessContractError, "FreeIPA realm"):
+            validator.validate_contracts(self.root)
+
+        self.write("freeipa", self.documents["freeipa"])
+        delivery = self.altered("delivery")
+        delivery["service"]["fqdn"] = "other.shell.internal"  # type: ignore[index]
+        self.write("delivery", delivery)
+        with self.assertRaisesRegex(validator.AccessContractError, "service contract"):
+            validator.validate_contracts(self.root)
+
+        self.write("delivery", self.documents["delivery"])
+        input_path = self.root / "sudo/secrets/delivery-input-contract.json"
+        input_contract = json.loads(input_path.read_text(encoding="utf-8"))
+        input_contract["repository_policy"]["private_values_tracked"] = True
+        input_path.write_text(json.dumps(input_contract), encoding="utf-8")
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "repository policy"
+        ):
+            validator.validate_contracts(self.root)
+
+        input_contract["repository_policy"]["private_values_tracked"] = False
+        input_contract["classes"]["forgejo_public_tls"]["issuer"] = "make"
+        input_path.write_text(json.dumps(input_contract), encoding="utf-8")
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "input classes"
+        ):
+            validator.validate_contracts(self.root)
+
+    def test_rejects_dns_and_credential_status_drift(self) -> None:
+        freeipa = self.altered("freeipa")
+        freeipa["managed_dns_records"][0]["name"] = "delivery"  # type: ignore[index]
+        self.write("freeipa", freeipa)
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "DNS name does not match FQDN"
+        ):
+            validator.validate_contracts(self.root)
+
+        freeipa = self.altered("freeipa")
+        freeipa["required_contracts"]["identity_credentials"][  # type: ignore[index]
+            "handoff_status"
+        ] = "ready"
+        self.write("freeipa", freeipa)
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "required contracts"
+        ):
             validator.validate_contracts(self.root)
 
     def test_rejects_implemented_or_secret_store_claims(self) -> None:
@@ -207,6 +273,45 @@ class TestAccessContracts(unittest.TestCase):
         with self.assertRaisesRegex(validator.AccessContractError, "missing regular"):
             validator.validate_contracts(self.root)
 
+    def test_rejects_missing_or_symlinked_cross_owner_references(self) -> None:
+        references = (
+            "sudo/secrets/delivery-input-contract.json",
+            "tar/manifests/delivery-supply.json",
+            "make/contracts/service-node-handoff-requirements.json",
+            "man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
+        )
+        for relative in references:
+            with self.subTest(reference=relative):
+                target = self.root / relative
+                source = SOURCE_ROOT / relative
+                target.unlink()
+                with self.assertRaisesRegex(
+                    validator.AccessContractError, "missing regular"
+                ):
+                    validator.validate_contracts(self.root)
+
+                outside = Path(self.temporary.name) / f"outside-{target.name}"
+                shutil.copyfile(source, outside)
+                target.symlink_to(outside)
+                with self.assertRaisesRegex(
+                    validator.AccessContractError, "missing regular"
+                ):
+                    validator.validate_contracts(self.root)
+                target.unlink()
+                shutil.copyfile(source, target)
+
+    def test_rejects_cross_owner_reference_through_symlinked_ancestor(self) -> None:
+        contracts = self.root / "make/contracts"
+        real_contracts = self.root / "make/contracts-real"
+        contracts.rename(real_contracts)
+        outside = Path(self.temporary.name) / "outside-contracts"
+        shutil.copytree(real_contracts, outside)
+        contracts.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "outside repository"
+        ):
+            validator.validate_contracts(self.root)
+
     def test_main_reports_controlled_secret_free_errors(self) -> None:
         identity = self.altered("identity")
         identity["proof_status"] = "live-verified"
@@ -220,6 +325,19 @@ class TestAccessContracts(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("must remain source-only", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_main_reports_all_validated_contracts(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with mock.patch.object(validator, "REPOSITORY_ROOT", self.root):
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                result = validator.main()
+        self.assertEqual(result, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(
+            stdout.getvalue(),
+            "validated 4 SUDO access profiles and 1 input contract\n",
+        )
 
 
 if __name__ == "__main__":

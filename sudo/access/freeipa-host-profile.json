@@ -12,10 +12,15 @@
   "inventory_group": "identity_nodes",
   "host": {
     "name": "identity-01",
-    "ip_address": "10.77.0.210"
+    "fqdn": "identity-01.shell.internal",
+    "ip_address": "10.77.0.210",
+    "operating_system": "almalinux-9"
   },
   "identity": {
     "authority": "freeipa",
+    "domain": "shell.internal",
+    "realm": "SHELL.INTERNAL",
+    "dns_forwarders": ["1.1.1.1", "9.9.9.9"],
     "roles": ["identity", "internal-dns"],
     "groups": ["platform-admins", "platform-operators", "auditors"],
     "identity_model": "sudo/access/identity-model.json"
@@ -24,6 +29,24 @@
     "tcp_ports": [53, 80, 88, 389, 443, 464, 636],
     "udp_ports": [53, 88, 464]
   },
+  "managed_dns_records": [
+    {
+      "name": "delivery-01",
+      "fqdn": "delivery-01.shell.internal",
+      "zone": "shell.internal",
+      "record_type": "A",
+      "address": "10.77.0.211",
+      "service_owner": "init"
+    },
+    {
+      "name": "forgejo",
+      "fqdn": "forgejo.shell.internal",
+      "zone": "shell.internal",
+      "record_type": "A",
+      "address": "10.77.0.211",
+      "service_owner": "make"
+    }
+  ],
   "execution": {
     "owner": "init",
     "playbook": "init/ansible/playbooks/configure-identity-service.yml",
@@ -32,26 +55,45 @@
   },
   "private_custody": {
     "root": ".local/sudo/identity",
-    "tracked": false,
+    "ignored": true,
     "directory_mode": "0700",
     "file_mode": "0600",
     "secret_store": "undecided"
   },
+  "secret_contract": {
+    "storage": "undecided",
+    "handoff_root": ".local/sudo/identity",
+    "private_values_tracked": false,
+    "required_keys": [
+      "directory_manager_password",
+      "admin_password",
+      "proof_operator_password",
+      "proof_denied_password"
+    ]
+  },
   "required_contracts": {
     "identity_configuration": {
       "owner": "sudo",
-      "status": "not-defined",
-      "required_fields": ["dns_domain", "kerberos_realm", "dns_forwarders"]
+      "status": "source-defined",
+      "required_fields": ["domain", "realm", "dns_forwarders"]
     },
     "identity_credentials": {
       "owner": "sudo",
-      "status": "not-defined",
-      "required_keys": ["directory_manager_password", "admin_password"]
+      "status": "source-defined",
+      "handoff_status": "not-defined",
+      "required_keys": [
+        "directory_manager_password",
+        "admin_password",
+        "proof_operator_password",
+        "proof_denied_password"
+      ]
     },
     "operating_system": {
       "owner": "init",
       "decision_owner": "man",
-      "status": "not-defined"
+      "decision": "man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
+      "status": "source-defined",
+      "value": "almalinux-9"
     },
     "artifact_supply": {
       "owner": "tar",

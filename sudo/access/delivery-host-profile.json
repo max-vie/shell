@@ -12,13 +12,31 @@
   "inventory_group": "delivery_nodes",
   "host": {
     "name": "delivery-01",
+    "fqdn": "delivery-01.shell.internal",
     "ip_address": "10.77.0.211",
     "operating_system": "debian-13",
     "intended_roles": ["forgejo", "rootless-runner"]
   },
   "trust": {
+    "domain": "shell.internal",
+    "dns_server": "10.77.0.210",
     "identity_host_profile": "sudo/access/freeipa-host-profile.json",
     "identity_model": "sudo/access/identity-model.json"
+  },
+  "service": {
+    "owner": "make",
+    "name": "forgejo",
+    "fqdn": "forgejo.shell.internal",
+    "port": 443,
+    "transport": "https",
+    "tls_input": "sudo/secrets/delivery-input-contract.json",
+    "certificate_dns_sans": ["forgejo.shell.internal"]
+  },
+  "private_input": {
+    "owner": "sudo",
+    "contract": "sudo/secrets/delivery-input-contract.json",
+    "contract_tracked": true,
+    "private_values_tracked": false
   },
   "execution": {
     "owner": "init",
@@ -29,15 +47,27 @@
   "required_contracts": {
     "workload_configuration": {
       "owner": "make",
-      "status": "not-defined"
+      "status": "source-defined",
+      "contract": "make/contracts/service-node-handoff-requirements.json",
+      "handoff_status": "not-defined"
     },
     "service_endpoints": {
       "owner": "make",
-      "status": "not-defined"
+      "status": "source-defined",
+      "contract": "make/contracts/service-node-handoff-requirements.json",
+      "handoff_status": "not-defined"
     },
     "delivery_credentials": {
       "owner": "sudo",
-      "status": "not-defined"
+      "status": "source-defined",
+      "contract": "sudo/secrets/delivery-input-contract.json",
+      "handoff_status": "not-defined"
+    },
+    "artifact_supply": {
+      "owner": "tar",
+      "status": "source-defined",
+      "contract": "tar/manifests/delivery-supply.json",
+      "handoff_status": "not-staged"
     }
   }
 }

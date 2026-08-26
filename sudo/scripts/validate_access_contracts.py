@@ -19,6 +19,7 @@ CONTRACT_FILES = {
 }
 CONTRACT_VERSIONS = {
     "delivery-host-profile": "2.0.0",
+    "delivery-input-contract": "1.0.0",
     "freeipa-host-profile": "2.0.0",
     "identity-model": "1.0.0",
     "kubernetes-ecosystem-profile": "1.0.0",
@@ -196,8 +197,10 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
             "host",
             "identity",
             "network",
+            "managed_dns_records",
             "execution",
             "private_custody",
+            "secret_contract",
             "required_contracts",
         },
     )
@@ -206,16 +209,37 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
     require(document["served_clusters"] == CLUSTERS, "FreeIPA clusters changed")
     require(document["inventory_group"] == "identity_nodes", "FreeIPA group changed")
     require(
-        document["host"] == {"name": "identity-01", "ip_address": "10.77.0.210"},
+        document["host"]
+        == {
+            "name": "identity-01",
+            "fqdn": "identity-01.shell.internal",
+            "ip_address": "10.77.0.210",
+            "operating_system": "almalinux-9",
+        },
         "FreeIPA host identity changed",
     )
     identity = document["identity"]
     require(
         isinstance(identity, dict)
-        and set(identity) == {"authority", "roles", "groups", "identity_model"},
+        and set(identity)
+        == {
+            "authority",
+            "domain",
+            "realm",
+            "dns_forwarders",
+            "roles",
+            "groups",
+            "identity_model",
+        },
         "FreeIPA identity shape changed",
     )
     require(identity["authority"] == "freeipa", "FreeIPA authority changed")
+    require(identity["domain"] == "shell.internal", "FreeIPA domain changed")
+    require(identity["realm"] == "SHELL.INTERNAL", "FreeIPA realm changed")
+    require(
+        identity["dns_forwarders"] == ["1.1.1.1", "9.9.9.9"],
+        "FreeIPA DNS forwarders changed",
+    )
     require(identity["roles"] == ["identity", "internal-dns"], "FreeIPA roles changed")
     require(identity["groups"] == GROUPS, "FreeIPA groups changed")
     require_reference(
@@ -231,6 +255,36 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
             "udp_ports": [53, 88, 464],
         },
         "FreeIPA network contract changed",
+    )
+    managed_dns_records = document["managed_dns_records"]
+    require(isinstance(managed_dns_records, list), "FreeIPA DNS records must be a list")
+    for record in managed_dns_records:
+        require(isinstance(record, dict), "FreeIPA DNS record must be an object")
+        require(
+            record.get("fqdn") == f"{record.get('name')}.{record.get('zone')}",
+            f"FreeIPA DNS name does not match FQDN: {record.get('name')}",
+        )
+    require(
+        managed_dns_records
+        == [
+            {
+                "name": "delivery-01",
+                "fqdn": "delivery-01.shell.internal",
+                "zone": "shell.internal",
+                "record_type": "A",
+                "address": "10.77.0.211",
+                "service_owner": "init",
+            },
+            {
+                "name": "forgejo",
+                "fqdn": "forgejo.shell.internal",
+                "zone": "shell.internal",
+                "record_type": "A",
+                "address": "10.77.0.211",
+                "service_owner": "make",
+            },
+        ],
+        "FreeIPA managed DNS records changed",
     )
     execution = document["execution"]
     require(
@@ -254,7 +308,7 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
         document["private_custody"]
         == {
             "root": ".local/sudo/identity",
-            "tracked": False,
+            "ignored": True,
             "directory_mode": "0700",
             "file_mode": "0600",
             "secret_store": UNDECIDED,
@@ -262,26 +316,55 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
         "FreeIPA private custody changed",
     )
     require(
+        document["secret_contract"]
+        == {
+            "storage": UNDECIDED,
+            "handoff_root": ".local/sudo/identity",
+            "private_values_tracked": False,
+            "required_keys": [
+                "directory_manager_password",
+                "admin_password",
+                "proof_operator_password",
+                "proof_denied_password",
+            ],
+        },
+        "FreeIPA secret contract changed",
+    )
+    require(
         document["required_contracts"]
         == {
             "identity_configuration": {
                 "owner": "sudo",
-                "status": "not-defined",
-                "required_fields": ["dns_domain", "kerberos_realm", "dns_forwarders"],
+                "status": "source-defined",
+                "required_fields": ["domain", "realm", "dns_forwarders"],
             },
             "identity_credentials": {
                 "owner": "sudo",
-                "status": "not-defined",
-                "required_keys": ["directory_manager_password", "admin_password"],
+                "status": "source-defined",
+                "handoff_status": "not-defined",
+                "required_keys": [
+                    "directory_manager_password",
+                    "admin_password",
+                    "proof_operator_password",
+                    "proof_denied_password",
+                ],
             },
             "operating_system": {
                 "owner": "init",
                 "decision_owner": "man",
-                "status": "not-defined",
+                "decision": "man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
+                "status": "source-defined",
+                "value": "almalinux-9",
             },
             "artifact_supply": {"owner": "tar", "status": "not-defined"},
         },
         "FreeIPA required contracts changed",
+    )
+    require_reference(
+        document["required_contracts"]["operating_system"]["decision"],
+        expected="man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
+        repository_root=repository_root,
+        label="FreeIPA operating-system decision",
     )
 
 
@@ -299,7 +382,9 @@ def validate_delivery(document: dict[str, Any], repository_root: Path) -> None:
             "inventory_group",
             "host",
             "trust",
+            "service",
             "execution",
+            "private_input",
             "required_contracts",
         },
     )
@@ -311,6 +396,7 @@ def validate_delivery(document: dict[str, Any], repository_root: Path) -> None:
         document["host"]
         == {
             "name": "delivery-01",
+            "fqdn": "delivery-01.shell.internal",
             "ip_address": "10.77.0.211",
             "operating_system": "debian-13",
             "intended_roles": ["forgejo", "rootless-runner"],
@@ -320,9 +406,12 @@ def validate_delivery(document: dict[str, Any], repository_root: Path) -> None:
     trust = document["trust"]
     require(
         isinstance(trust, dict)
-        and set(trust) == {"identity_host_profile", "identity_model"},
+        and set(trust)
+        == {"domain", "dns_server", "identity_host_profile", "identity_model"},
         "delivery trust shape changed",
     )
+    require(trust["domain"] == "shell.internal", "delivery trust domain changed")
+    require(trust["dns_server"] == "10.77.0.210", "delivery DNS server changed")
     require_reference(
         trust["identity_host_profile"],
         expected="sudo/access/freeipa-host-profile.json",
@@ -334,6 +423,35 @@ def validate_delivery(document: dict[str, Any], repository_root: Path) -> None:
         expected="sudo/access/identity-model.json",
         repository_root=repository_root,
         label="delivery identity model",
+    )
+    require(
+        document["service"]
+        == {
+            "owner": "make",
+            "name": "forgejo",
+            "fqdn": "forgejo.shell.internal",
+            "port": 443,
+            "transport": "https",
+            "tls_input": "sudo/secrets/delivery-input-contract.json",
+            "certificate_dns_sans": ["forgejo.shell.internal"],
+        },
+        "delivery service contract changed",
+    )
+    require_reference(
+        document["service"]["tls_input"],
+        expected="sudo/secrets/delivery-input-contract.json",
+        repository_root=repository_root,
+        label="delivery credential contract",
+    )
+    require(
+        document["private_input"]
+        == {
+            "owner": "sudo",
+            "contract": "sudo/secrets/delivery-input-contract.json",
+            "contract_tracked": True,
+            "private_values_tracked": False,
+        },
+        "delivery private input changed",
     )
     execution = document["execution"]
     require(
@@ -356,11 +474,129 @@ def validate_delivery(document: dict[str, Any], repository_root: Path) -> None:
     require(
         document["required_contracts"]
         == {
-            "workload_configuration": {"owner": "make", "status": "not-defined"},
-            "service_endpoints": {"owner": "make", "status": "not-defined"},
-            "delivery_credentials": {"owner": "sudo", "status": "not-defined"},
+            "workload_configuration": {
+                "owner": "make",
+                "status": "source-defined",
+                "contract": "make/contracts/service-node-handoff-requirements.json",
+                "handoff_status": "not-defined",
+            },
+            "service_endpoints": {
+                "owner": "make",
+                "status": "source-defined",
+                "contract": "make/contracts/service-node-handoff-requirements.json",
+                "handoff_status": "not-defined",
+            },
+            "delivery_credentials": {
+                "owner": "sudo",
+                "status": "source-defined",
+                "contract": "sudo/secrets/delivery-input-contract.json",
+                "handoff_status": "not-defined",
+            },
+            "artifact_supply": {
+                "owner": "tar",
+                "status": "source-defined",
+                "contract": "tar/manifests/delivery-supply.json",
+                "handoff_status": "not-staged",
+            },
         },
         "delivery required contracts changed",
+    )
+    require_reference(
+        document["required_contracts"]["workload_configuration"]["contract"],
+        expected="make/contracts/service-node-handoff-requirements.json",
+        repository_root=repository_root,
+        label="delivery MAKE handoff contract",
+    )
+    require_reference(
+        document["required_contracts"]["artifact_supply"]["contract"],
+        expected="tar/manifests/delivery-supply.json",
+        repository_root=repository_root,
+        label="delivery TAR supply contract",
+    )
+
+
+def validate_delivery_input_contract(
+    repository_root: Path,
+) -> None:
+    label = "delivery input contract"
+    path = repository_root / "sudo/secrets/delivery-input-contract.json"
+    document = read_json_object(path, label, repository_root=repository_root)
+    require_common(
+        document,
+        label=label,
+        contract_id="delivery-input-contract",
+        consumers=["make"],
+        fields={"private_custody", "private_inputs", "classes", "repository_policy"},
+    )
+    require(
+        document["private_custody"]
+        == {
+            "root": ".local/sudo/delivery",
+            "storage": UNDECIDED,
+            "ignored": True,
+            "directory_mode": "0700",
+            "file_mode": "0600",
+        },
+        "delivery private custody changed",
+    )
+    require(
+        document["private_inputs"]
+        == {
+            "bootstrap": {
+                "path": ".local/sudo/delivery/bootstrap",
+                "ignored": True,
+            },
+            "runtime": {
+                "path": ".local/sudo/delivery/runtime",
+                "ignored": True,
+            },
+        },
+        "delivery private input boundary changed",
+    )
+    require(
+        document["classes"]
+        == {
+            "forgejo_bootstrap": {
+                "issuer": "sudo",
+                "deployment_target": "delivery-01",
+                "required_keys": [
+                    "admin_username",
+                    "admin_password",
+                    "security_secret_key",
+                    "internal_token",
+                    "jwt_secret",
+                ],
+                "input_phase": "pre-service",
+            },
+            "forgejo_public_tls": {
+                "issuer": "sudo",
+                "deployment_target": "delivery-01",
+                "dns_sans": ["forgejo.shell.internal"],
+                "required_keys": ["certificate", "private_key", "root_ca"],
+                "input_phase": "pre-service",
+            },
+            "forgejo_runner": {
+                "issuer": "forgejo-after-bootstrap",
+                "deployment_target": "delivery-01",
+                "required_keys": ["url", "uuid", "token"],
+                "one_time_bootstrap": True,
+                "input_phase": "post-service",
+            },
+            "forgejo_repository": {
+                "issuer": "forgejo-after-bootstrap",
+                "deployment_target": "delivery-node-only",
+                "transport": "https",
+                "repository_url": "https://forgejo.shell.internal/shell/make.git",
+                "required_keys": ["url", "username", "api_token"],
+                "input_phase": "post-service",
+            },
+        },
+        "delivery input classes changed",
+    )
+    require(
+        document["repository_policy"]
+        == {"contract_tracked": True, "private_values_tracked": False},
+        "delivery repository policy changed",
     )
 
 
@@ -427,6 +663,7 @@ def validate_contracts(
     validate_identity(documents["identity"])
     validate_freeipa(documents["freeipa"], repository_root)
     validate_delivery(documents["delivery"], repository_root)
+    validate_delivery_input_contract(repository_root)
     validate_kubernetes(documents["kubernetes"], repository_root)
     return documents
 
@@ -437,7 +674,7 @@ def main() -> int:
     except AccessContractError as error:
         print(f"access contract validation failed: {error}", file=sys.stderr)
         return 2
-    print(f"validated {len(documents)} SUDO access contracts")
+    print(f"validated {len(documents)} SUDO access profiles and 1 input contract")
     return 0
 
 

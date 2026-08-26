@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "service-node-handoff-requirements",
+  "description": "MAKE requirements for the INIT-prepared delivery host.",
+  "policy_owner": "make",
+  "producer_owner": "init",
+  "consumer_owners": ["make"],
+  "proof_status": "source-only",
+  "source_contracts": {
+    "identity_profile": "sudo/access/freeipa-host-profile.json",
+    "delivery_profile": "sudo/access/delivery-host-profile.json",
+    "delivery_inputs": "sudo/secrets/delivery-input-contract.json",
+    "artifact_supply": "tar/manifests/delivery-supply.json"
+  },
+  "required_identity": {
+    "service_node_id": "delivery-01",
+    "role": "delivery",
+    "os": {
+      "name": "debian",
+      "major_version": 13
+    },
+    "trust_domain": "shell.internal"
+  },
+  "required_rootless_packages": [
+    "buildah",
+    "ca-certificates",
+    "dbus-user-session",
+    "fuse-overlayfs",
+    "podman",
+    "podman-compose",
+    "skopeo",
+    "slirp4netns",
+    "uidmap"
+  ],
+  "trust": {
+    "dns_server": "10.77.0.210",
+    "forgejo_host": "forgejo.shell.internal"
+  },
+  "required_service": {
+    "name": "forgejo",
+    "fqdn": "forgejo.shell.internal",
+    "port": 443,
+    "transport": "https",
+    "tls_dns_sans": ["forgejo.shell.internal"]
+  },
+  "required_artifacts": {
+    "platform": "linux/amd64",
+    "images": ["forgejo", "forgejo_runner", "caddy", "node"]
+  },
+  "excluded_fields": [
+    "ip_address",
+    "vcpus",
+    "memory_mib",
+    "disk_gib",
+    "credential_values",
+    "private_keys",
+    "tokens"
+  ]
+}
