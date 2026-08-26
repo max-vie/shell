@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Stage the checksum-locked cert-manager chart for MAKE."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import stat
+import sys
+import tempfile
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any, Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from validate_kubernetes_supply import (
+    SupplyError,
+    _check_no_symlink_components,
+    sha256_file,
+    validate_public,
+)
+
+
+PRIVATE_DIRECTORY_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
+CHUNK_SIZE = 1024 * 1024
+
+
+class StageError(RuntimeError):
+    """The cert-manager chart could not be staged safely."""
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise StageError(message)
+
+
+def safe_path(path: Path, label: str) -> Path:
+    try:
+        return _check_no_symlink_components(path, label)
+    except SupplyError as error:
+        raise StageError(str(error)) from error
+
+
+def ensure_directory(path: Path, label: str) -> Path:
+    path = safe_path(path, label)
+    require(not path.is_symlink(), f"{label} must not be a symlink")
+    path.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIRECTORY_MODE)
+    require(path.is_dir(), f"{label} must be a directory")
+    path.chmod(PRIVATE_DIRECTORY_MODE)
+    return path
+
+
+def stage(
+    local_root: Path,
+    *,
+    opener: Callable[..., Any] = urllib.request.urlopen,
+) -> Path:
+    lock = validate_public()
+    chart = lock["charts"]["cert-manager"]
+    local_root = ensure_directory(local_root, "Kubernetes local root")
+    chart_root = ensure_directory(local_root / "charts", "Kubernetes chart directory")
+    target = safe_path(
+        chart_root / f"{chart['name']}-{chart['version']}.tgz",
+        "cert-manager chart",
+    )
+    if target.exists():
+        require(not target.is_symlink() and target.is_file(), "existing cert-manager chart is not a regular file")
+        require(stat.S_IMODE(target.stat().st_mode) == PRIVATE_FILE_MODE, "existing cert-manager chart must be mode 0600")
+        require(sha256_file(target) == chart["sha256"], "existing cert-manager chart differs from the lock")
+        return target
+
+    source = urllib.parse.urlsplit(chart["source"])
+    require(source.scheme == "https" and source.netloc == "charts.jetstack.io", "cert-manager source is not approved")
+    request = urllib.request.Request(chart["source"], headers={"User-Agent": "shell-kubernetes-supply/1"})
+    temporary: Path | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=chart_root)
+        temporary = Path(temporary_name)
+        os.fchmod(descriptor, PRIVATE_FILE_MODE)
+        with os.fdopen(descriptor, "wb") as output, opener(request, timeout=180) as response:
+            final = urllib.parse.urlsplit(response.geturl())
+            require(final.scheme == "https" and final.netloc == source.netloc, "cert-manager source redirected outside its approved host")
+            while True:
+                chunk = response.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        require(sha256_file(temporary) == chart["sha256"], "downloaded cert-manager chart checksum does not match the lock")
+        os.replace(temporary, target)
+        target.chmod(PRIVATE_FILE_MODE)
+        directory = os.open(
+            chart_root,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return target
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--local-root", type=Path, default=Path(".local/tar/kubernetes"))
+    args = parser.parse_args(argv)
+    try:
+        path = stage(args.local_root)
+    except (OSError, SupplyError, StageError) as error:
+        print(f"Kubernetes supply staging failed: {error}", file=sys.stderr)
+        return 2
+    print(f"staged verified cert-manager chart: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
