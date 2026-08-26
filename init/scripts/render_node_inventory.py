@@ -1,9 +1,10 @@
 """Render the private Ansible inventory from the OpenTofu roots.
 
-OpenTofu remains the source of truth for node names, addresses, zones, GCP
-project IDs, and VM IDs. This adapter validates those facts, derives role and
-transport labels from the owning root, and writes a JSON inventory for Ansible.
-It does not run OpenTofu, read credentials, start guests, or connect to a host.
+OpenTofu remains the source of truth for node names, addresses, zones, image
+identity, operating systems, GCP project IDs, and VM IDs. This adapter validates
+those facts, derives role and transport labels from the owning root, and writes
+a JSON inventory for Ansible. It does not run OpenTofu, read credentials, start
+guests, or connect to a host.
 """
 
 from __future__ import annotations
@@ -67,10 +68,25 @@ PROXMOX_GUEST_NETWORK = ipaddress.ip_network("10.66.0.0/24")
 GCP_NODE_NETWORK = ipaddress.ip_network("10.77.0.0/24")
 GCP_ZONE_PATTERN = re.compile(r"^[a-z][a-z0-9-]+[0-9]-[a-z]$")
 GCP_PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+GCP_K3S_IMAGE_PATTERN = re.compile(
+    r"^https://www[.]googleapis[.]com/compute/v1/projects/debian-cloud/"
+    r"global/images/debian-13([-a-z0-9]*[a-z0-9])?$"
+)
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+OUTPUT_ENVELOPE_FIELDS = {"sensitive", "type", "value"}
 
 
 class InventoryError(ValueError):
     """Raised when OpenTofu output cannot safely become inventory."""
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise InventoryError(f"duplicate JSON key: {key}")
+        value[key] = item
+    return value
 
 
 def load_json(path: Path, label: str) -> Any:
@@ -80,11 +96,31 @@ def load_json(path: Path, label: str) -> Any:
     if not path.is_file():
         raise InventoryError(f"{label} must be a regular file: {path}")
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
     except UnicodeDecodeError as error:
         raise InventoryError(f"{label} must be UTF-8 text: {path}") from error
     except json.JSONDecodeError as error:
         raise InventoryError(f"{label} is not valid JSON: {path}") from error
+
+
+def unwrap_output_envelope(value: Any, label: str) -> Any:
+    if not isinstance(value, dict) or set(value) != OUTPUT_ENVELOPE_FIELDS:
+        raise InventoryError(f"{label} has a malformed output envelope")
+    if not isinstance(value["sensitive"], bool):
+        raise InventoryError(f"{label} output sensitivity metadata must be boolean")
+    if value["sensitive"]:
+        raise InventoryError(f"{label} must not contain sensitive output")
+    return value["value"]
+
+
+def contains_output_envelope(value: dict[str, Any]) -> bool:
+    return any(
+        isinstance(item, dict) and bool(set(item) & OUTPUT_ENVELOPE_FIELDS)
+        for item in value.values()
+    )
 
 
 def output_map(value: Any, key: str, label: str) -> dict[str, Any]:
@@ -93,17 +129,8 @@ def output_map(value: Any, key: str, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise InventoryError(f"{label} must contain a node mapping")
     if key in value:
-        envelope = value[key]
-        required = {"sensitive", "type", "value"}
-        if not isinstance(envelope, dict) or not required.issubset(envelope):
-            raise InventoryError(f"{label} has a malformed complete output envelope")
-        if not isinstance(envelope["sensitive"], bool):
-            raise InventoryError(f"{label} output sensitivity metadata must be boolean")
-        value = envelope["value"]
-    elif any(
-        isinstance(item, dict) and {"sensitive", "type", "value"}.issubset(item)
-        for item in value.values()
-    ):
+        value = unwrap_output_envelope(value[key], label)
+    elif contains_output_envelope(value):
         raise InventoryError(f"complete output is missing {key}")
     if not isinstance(value, dict):
         raise InventoryError(f"{label} must contain a node mapping")
@@ -115,26 +142,26 @@ def output_object(value: Any, key: str, label: str) -> dict[str, Any]:
 
     if not isinstance(value, dict):
         raise InventoryError(f"{label} must contain an object")
-    envelope_keys = {"sensitive", "type", "value"}
     if key in value:
-        envelope = value[key]
-        if not isinstance(envelope, dict) or not envelope_keys.issubset(envelope):
-            raise InventoryError(f"{label} has a malformed complete output envelope")
-        value = envelope
-    elif any(
-        isinstance(item, dict) and envelope_keys.issubset(item)
-        for item in value.values()
-    ):
+        value = unwrap_output_envelope(value[key], label)
+    elif contains_output_envelope(value):
         raise InventoryError(f"complete output is missing {key}")
-    if any(envelope_key in value for envelope_key in envelope_keys):
-        if not envelope_keys.issubset(value):
-            raise InventoryError(f"{label} has a malformed complete output envelope")
-        if not isinstance(value["sensitive"], bool):
-            raise InventoryError(f"{label} output sensitivity metadata must be boolean")
-        value = value["value"]
+    elif bool(set(value) & OUTPUT_ENVELOPE_FIELDS):
+        value = unwrap_output_envelope(value, label)
     if not isinstance(value, dict):
         raise InventoryError(f"{label} must contain an object")
     return value
+
+
+def complete_outputs(
+    value: Any, expected: set[str], label: str
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != expected:
+        raise InventoryError(f"{label} must contain exactly {sorted(expected)}")
+    return {
+        key: unwrap_output_envelope(envelope, f"{label} {key}")
+        for key, envelope in value.items()
+    }
 
 
 def require_string(value: Any, field: str, node_name: str) -> str:
@@ -169,6 +196,38 @@ def private_ipv4(value: Any, field: str, node_name: str) -> str:
             f"{node_name} {field} must be an RFC1918 IPv4 address: {raw}"
         )
     return str(address)
+
+
+def gcp_k3s_output(value: Any) -> tuple[dict[str, Any], dict[str, str]]:
+    outputs = complete_outputs(
+        value,
+        {"api_address", "api_endpoint", "k3s_nodes"},
+        "GCP K3s outputs",
+    )
+    address = private_ipv4(outputs["api_address"], "api_address", "GCP K3s API")
+    api_address = ipaddress.ip_address(address)
+    reserved_addresses = {
+        GCP_NODE_NETWORK.network_address,
+        GCP_NODE_NETWORK.broadcast_address,
+        *(ipaddress.ip_address(value) for value in EXPECTED_GCP_K3S_ADDRESSES.values()),
+        *(ipaddress.ip_address(value) for value in EXPECTED_SHARED_ADDRESSES.values()),
+        ipaddress.ip_address("10.77.0.220"),
+    }
+    if api_address not in GCP_NODE_NETWORK or api_address in reserved_addresses:
+        raise InventoryError(
+            f"GCP K3s API address must be an unreserved host in {GCP_NODE_NETWORK}"
+        )
+    endpoint = require_string(outputs["api_endpoint"], "api_endpoint", "GCP K3s API")
+    if endpoint != f"https://{address}:6443":
+        raise InventoryError("GCP K3s API endpoint does not match its address")
+    nodes = outputs["k3s_nodes"]
+    if not isinstance(nodes, dict):
+        raise InventoryError("GCP K3s nodes must contain a node mapping")
+    return nodes, {
+        "address": address,
+        "endpoint": endpoint,
+        "host": address,
+    }
 
 
 def private_interface(value: Any, field: str, node_name: str) -> tuple[str, str]:
@@ -212,6 +271,17 @@ def normalize_gcp_nodes(
         record = nodes[name]
         if not isinstance(record, dict):
             raise InventoryError(f"{name} must contain an object")
+        expected_fields = {
+            "name",
+            "zone",
+            "internal_ip",
+            "operating_system",
+            "project_id",
+        }
+        if cluster == "gcp":
+            expected_fields.add("source_image")
+        if set(record) != expected_fields:
+            raise InventoryError(f"{name} output shape changed")
         if require_string(record.get("name"), "name", name) != name:
             raise InventoryError(f"{name} output name does not match its map key")
         address = private_ipv4(record.get("internal_ip"), "internal_ip", name)
@@ -228,8 +298,8 @@ def normalize_gcp_nodes(
         zone = require_string(record.get("zone"), "zone", name)
         if GCP_ZONE_PATTERN.fullmatch(zone) is None:
             raise InventoryError(f"{name} has an invalid zone: {zone}")
-        # These values are derived from the owning root. The current OpenTofu
-        # outputs carry infrastructure facts, not Ansible policy labels.
+        # Role and transport are derived from the owning root; image and OS
+        # identity must arrive in the OpenTofu output itself.
         role = expected[name] if isinstance(expected, dict) else "k3s"
         normalized_record = {
             "name": name,
@@ -240,18 +310,24 @@ def normalize_gcp_nodes(
             "gcp_zone": zone,
             "project_id": project_id,
         }
-        if cluster == "shared":
-            operating_system = require_string(
-                record.get("operating_system"), "operating_system", name
+        operating_system = require_string(
+            record.get("operating_system"), "operating_system", name
+        )
+        expected_operating_system = (
+            EXPECTED_SHARED_OPERATING_SYSTEMS[name]
+            if cluster == "shared"
+            else "debian-13"
+        )
+        if operating_system != expected_operating_system:
+            raise InventoryError(
+                f"{name} operating system must be "
+                f"{expected_operating_system}: {operating_system}"
             )
-            if operating_system != EXPECTED_SHARED_OPERATING_SYSTEMS[name]:
-                raise InventoryError(
-                    f"{name} operating system must be "
-                    f"{EXPECTED_SHARED_OPERATING_SYSTEMS[name]}: {operating_system}"
-                )
-            normalized_record["operating_system"] = operating_system
-        else:
-            normalized_record["operating_system"] = "debian-13"
+        if cluster == "gcp":
+            source_image = require_string(record.get("source_image"), "source_image", name)
+            if GCP_K3S_IMAGE_PATTERN.fullmatch(source_image) is None:
+                raise InventoryError(f"{name} must use an official Debian 13 image")
+        normalized_record["operating_system"] = operating_system
         normalized.append(normalized_record)
     return normalized
 
@@ -263,6 +339,16 @@ def normalize_proxmox_nodes(nodes: dict[str, Any]) -> list[dict[str, Any]]:
         record = nodes[name]
         if not isinstance(record, dict):
             raise InventoryError(f"{name} must contain an object")
+        if set(record) != {
+            "name",
+            "vm_id",
+            "address",
+            "node",
+            "operating_system",
+            "image_file_name",
+            "image_sha256",
+        }:
+            raise InventoryError(f"{name} output shape changed")
         if require_string(record.get("name"), "name", name) != name:
             raise InventoryError(f"{name} output name does not match its map key")
         address, address_cidr = private_interface(
@@ -283,6 +369,23 @@ def normalize_proxmox_nodes(nodes: dict[str, Any]) -> list[dict[str, Any]]:
         # Keep the PVE placement facts for the later ProxyJump/guest workflow;
         # they are not credentials and do not start or inspect the host.
         pve_node = require_string(record.get("node"), "node", name)
+        operating_system = require_string(
+            record.get("operating_system"), "operating_system", name
+        )
+        if operating_system != "debian-13":
+            raise InventoryError(f"{name} operating system must be debian-13")
+        image_file_name = require_string(
+            record.get("image_file_name"), "image_file_name", name
+        )
+        if Path(image_file_name).name != image_file_name or not image_file_name.endswith(
+            ".qcow2"
+        ):
+            raise InventoryError(f"{name} image file name is invalid")
+        image_sha256 = require_string(
+            record.get("image_sha256"), "image_sha256", name
+        )
+        if SHA256_PATTERN.fullmatch(image_sha256) is None:
+            raise InventoryError(f"{name} image checksum is invalid")
         normalized.append(
             {
                 "name": name,
@@ -293,12 +396,15 @@ def normalize_proxmox_nodes(nodes: dict[str, Any]) -> list[dict[str, Any]]:
                 "transport": "proxmox_ssh",
                 "proxmox_vm_id": vm_id,
                 "proxmox_node": pve_node,
+                "operating_system": operating_system,
             }
         )
     return normalized
 
 
 def normalize_proxmox_host(value: dict[str, Any]) -> dict[str, str]:
+    if set(value) != {"instance_name", "zone", "internal_ip", "project_id"}:
+        raise InventoryError("proxmox host output shape changed")
     name = require_string(value.get("instance_name"), "instance_name", "proxmox host")
     if name != "proxmox-host":
         raise InventoryError(f"proxmox host name must be proxmox-host: {name}")
@@ -330,7 +436,9 @@ def validate_unique_vm_ids(nodes: list[dict[str, Any]]) -> None:
 
 
 def inventory(
-    nodes: list[dict[str, Any]], proxmox_host: dict[str, str]
+    nodes: list[dict[str, Any]],
+    proxmox_host: dict[str, str],
+    gcp_k3s_api: dict[str, str],
 ) -> dict[str, Any]:
     # Keep cluster groups separate while exposing role groups for later
     # identity and delivery playbooks.
@@ -342,6 +450,18 @@ def inventory(
     role_hosts: dict[str, dict[str, dict[str, Any]]] = {
         "identity_nodes": {},
         "delivery_nodes": {},
+    }
+    group_vars = {
+        "gcp_k3s_servers": {
+            "shell_inventory_k3s_api_address": gcp_k3s_api["address"],
+            "shell_inventory_k3s_api_endpoint": gcp_k3s_api["endpoint"],
+            "shell_inventory_k3s_api_host": gcp_k3s_api["host"],
+        },
+        "proxmox_k3s_servers": {
+            "shell_inventory_k3s_api_address": "10.66.0.200",
+            "shell_inventory_k3s_api_endpoint": "https://10.66.0.200:6443",
+            "shell_inventory_k3s_api_host": "10.66.0.200",
+        },
     }
     gcp_project_ids = {
         node["project_id"] for node in nodes if node["transport"] == "gcp_iap"
@@ -371,6 +491,7 @@ def inventory(
         else:
             hostvars.update(
                 {
+                    "shell_operating_system": node["operating_system"],
                     "shell_address_cidr": node["address_cidr"],
                     "proxmox_vm_id": node["proxmox_vm_id"],
                     "proxmox_node": node["proxmox_node"],
@@ -404,7 +525,15 @@ def inventory(
                 },
                 "shell_nodes": {
                     "children": {
-                        group: {"hosts": hosts} for group, hosts in group_hosts.items()
+                        group: {
+                            "hosts": hosts,
+                            **(
+                                {"vars": group_vars[group]}
+                                if group in group_vars
+                                else {}
+                            ),
+                        }
+                        for group, hosts in group_hosts.items()
                     }
                 },
                 **{group: {"hosts": hosts} for group, hosts in role_hosts.items()},
@@ -427,15 +556,15 @@ def inventory(
 
 
 def build_inventory(args: argparse.Namespace) -> dict[str, Any]:
-    # Each file is one OpenTofu root's output. Accepting named or raw outputs
-    # keeps the handoff read-only and avoids a shared-state dependency here.
+    # Each file is one OpenTofu root's output. The GCP K3s root must provide
+    # its complete output so the API endpoint and node facts remain bound.
     shared = output_map(
         load_json(args.shared_nodes_file, "shared nodes"),
         "shared_nodes",
         "shared nodes",
     )
-    gcp_k3s = output_map(
-        load_json(args.gcp_k3s_file, "GCP K3s nodes"), "k3s_nodes", "GCP K3s nodes"
+    gcp_k3s, gcp_k3s_api = gcp_k3s_output(
+        load_json(args.gcp_k3s_file, "GCP K3s outputs")
     )
     proxmox = output_map(
         load_json(args.proxmox_k3s_file, "Proxmox K3s nodes"),
@@ -455,7 +584,7 @@ def build_inventory(args: argparse.Namespace) -> dict[str, Any]:
         *normalize_proxmox_nodes(proxmox),
     ]
     validate_unique_vm_ids(nodes)
-    return inventory(nodes, proxmox_host)
+    return inventory(nodes, proxmox_host, gcp_k3s_api)
 
 
 def atomic_write(path: Path, value: dict[str, Any]) -> None:

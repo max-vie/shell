@@ -18,6 +18,8 @@ guest configuration. This page groups those operating rules by concern.
 Ansible's generated inventory supplies the instance name, zone, project,
 private address, and transport label. The private inventory supplies the OS
 Login user, SSH agent or key handoff, and reviewed `known_hosts` file.
+The renderer rejects duplicate JSON keys, sensitive OpenTofu output envelopes,
+and K3s output that omits its operating-system or image identity.
 
 The Proxmox host has no external address. A private execution wrapper provides
 two IAP TCP tunnels: local port `18006` to API port `8006`, and local port
@@ -68,7 +70,7 @@ source-only boundary.
 | Google application credentials | SUDO and the execution environment | OpenTofu Google provider | Outside the checkout, through application default credentials or workload identity federation |
 | Proxmox API token | SUDO | OpenTofu Proxmox provider | Private process environment or wrapper |
 | SSH agent and key material | SUDO and the execution environment | OpenTofu image upload and Ansible | SSH agent or private files outside Git |
-| K3s server token | SUDO | INIT K3s playbooks | Private token-file path supplied at runtime |
+| K3s server token | SUDO | INIT K3s playbooks | Fixed per-cluster path derived by INIT |
 | Administrator kubeconfig | INIT | Later cluster consumers | Ignored `.local/ansible/kubeconfig/` state, mode `0600` |
 
 Keep credentials, private keys, token values, kubeconfigs, state, plans, and

@@ -1,4 +1,4 @@
-"""Test the shared GCP identity and delivery source contract."""
+"""Test the GCP and Proxmox node source contracts."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from pathlib import Path
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 SHARED_ROOT = SOURCE_ROOT / "init/opentofu/gcp/shared"
+GCP_K3S_ROOT = SOURCE_ROOT / "init/opentofu/gcp/k3s"
+PROXMOX_K3S_ROOT = SOURCE_ROOT / "init/opentofu/proxmox/k3s"
 
 
 def resource_block(source: str, name: str, next_marker: str) -> str:
@@ -41,6 +43,25 @@ class TestSharedNodeContract(unittest.TestCase):
         self.assertIn('operating_system  = "almalinux-9"', example)
         self.assertIn('operating_system  = "debian-13"', example)
         self.assertIn("operating_system = var.shared_nodes[name]", outputs)
+
+    def test_k3s_roots_export_operating_system_and_image_identity(self) -> None:
+        gcp_variables = (GCP_K3S_ROOT / "variables.tf").read_text(encoding="utf-8")
+        gcp_example = (GCP_K3S_ROOT / "terraform.tfvars.example").read_text(
+            encoding="utf-8"
+        )
+        gcp_outputs = (GCP_K3S_ROOT / "outputs.tf").read_text(encoding="utf-8")
+        proxmox_outputs = (PROXMOX_K3S_ROOT / "outputs.tf").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("operating_system  = string", gcp_variables)
+        self.assertIn("projects/debian-cloud/global/images/debian-13", gcp_variables)
+        self.assertEqual(gcp_example.count('operating_system  = "debian-13"'), 3)
+        self.assertIn("operating_system = var.k3s_nodes[name]", gcp_outputs)
+        self.assertIn("source_image     = var.k3s_nodes[name]", gcp_outputs)
+        self.assertIn('operating_system = "debian-13"', proxmox_outputs)
+        self.assertIn("image_file_name  = var.debian_image.file_name", proxmox_outputs)
+        self.assertIn("image_sha256     = var.debian_image.sha256", proxmox_outputs)
 
     def test_role_firewalls_match_public_service_contracts(self) -> None:
         source = (SHARED_ROOT / "main.tf").read_text(encoding="utf-8")

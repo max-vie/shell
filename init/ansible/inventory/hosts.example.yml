@@ -61,39 +61,66 @@ all:
               shell_operating_system: debian-13
               gcp_zone: europe-west4-b
         gcp_k3s_servers:
+          vars:
+            shell_inventory_k3s_api_address: replace-with-gcp-k3s-api-address
+            shell_inventory_k3s_api_endpoint: >-
+              https://replace-with-gcp-k3s-api-address:6443
+            shell_inventory_k3s_api_host: replace-with-gcp-k3s-api-address
           hosts:
             gcp-k3s-01:
               ansible_host: 10.77.0.201
               shell_expected_address: 10.77.0.201
+              shell_role: k3s
+              shell_cluster: gcp
               shell_transport: gcp_iap
               shell_operating_system: debian-13
               gcp_zone: europe-west4-a
             gcp-k3s-02:
               ansible_host: 10.77.0.202
               shell_expected_address: 10.77.0.202
+              shell_role: k3s
+              shell_cluster: gcp
               shell_transport: gcp_iap
               shell_operating_system: debian-13
               gcp_zone: europe-west4-b
             gcp-k3s-03:
               ansible_host: 10.77.0.203
               shell_expected_address: 10.77.0.203
+              shell_role: k3s
+              shell_cluster: gcp
               shell_transport: gcp_iap
               shell_operating_system: debian-13
               gcp_zone: europe-west4-c
         proxmox_k3s_servers:
+          vars:
+            shell_inventory_k3s_api_address: 10.66.0.200
+            shell_inventory_k3s_api_endpoint: https://10.66.0.200:6443
+            shell_inventory_k3s_api_host: 10.66.0.200
           hosts:
             proxmox-k3s-01:
               ansible_host: 10.66.0.201
               shell_expected_address: 10.66.0.201
               shell_address_cidr: 10.66.0.201/24
+              shell_role: k3s
+              shell_cluster: proxmox
+              shell_transport: proxmox_ssh
+              shell_operating_system: debian-13
             proxmox-k3s-02:
               ansible_host: 10.66.0.202
               shell_expected_address: 10.66.0.202
               shell_address_cidr: 10.66.0.202/24
+              shell_role: k3s
+              shell_cluster: proxmox
+              shell_transport: proxmox_ssh
+              shell_operating_system: debian-13
             proxmox-k3s-03:
               ansible_host: 10.66.0.203
               shell_expected_address: 10.66.0.203
               shell_address_cidr: 10.66.0.203/24
+              shell_role: k3s
+              shell_cluster: proxmox
+              shell_transport: proxmox_ssh
+              shell_operating_system: debian-13
     identity_nodes:
       hosts:
         identity-01: {}

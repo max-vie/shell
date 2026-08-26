@@ -51,6 +51,7 @@ variable "api_address" {
     condition = var.api_address == null || try(
       regex("^10[.]77[.]0[.][0-9]{1,3}$", var.api_address) != "" &&
       cidrhost("${var.api_address}/24", 0) == "10.77.0.0" &&
+      cidrhost("${var.api_address}/24", 0) != var.api_address &&
       cidrhost("${var.api_address}/24", -1) != var.api_address &&
       !contains([
         "10.77.0.201",
@@ -78,6 +79,7 @@ variable "k3s_nodes" {
     zone              = string
     address           = string
     machine_type      = string
+    operating_system  = string
     source_image      = string
     boot_disk_size_gb = number
     data_disk_size_gb = number
@@ -104,11 +106,12 @@ variable "k3s_nodes" {
       for node in values(var.k3s_nodes) : (
         can(regex("^[a-z][a-z0-9-]+[0-9]-[a-z]$", node.zone)) &&
         length(trimspace(node.machine_type)) > 0 &&
-        can(regex("^https://www[.]googleapis[.]com/compute/v1/projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/global/images/[a-z]([-a-z0-9]*[a-z0-9])?$", node.source_image)) &&
+        node.operating_system == "debian-13" &&
+        can(regex("^https://www[.]googleapis[.]com/compute/v1/projects/debian-cloud/global/images/debian-13([-a-z0-9]*[a-z0-9])?$", node.source_image)) &&
         node.boot_disk_size_gb >= 10 && node.boot_disk_size_gb == floor(node.boot_disk_size_gb) &&
         node.data_disk_size_gb > 0 && node.data_disk_size_gb == floor(node.data_disk_size_gb)
       )
     ])
-    error_message = "Each GCP K3s node needs a valid zone, machine type, pinned image self-link, and positive integer disk sizes."
+    error_message = "Each GCP K3s node needs Debian 13 from the official GCP image project, a valid zone and machine type, and positive integer disk sizes."
   }
 }

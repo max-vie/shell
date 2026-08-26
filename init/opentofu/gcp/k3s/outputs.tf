@@ -9,13 +9,15 @@ output "api_endpoint" {
 }
 
 output "k3s_nodes" {
-  description = "Direct-GCP K3s node names, zones, and private addresses."
+  description = "Direct-GCP K3s node identity, placement, and source-image facts."
   value = {
     for name, node in module.k3s_nodes : name => {
-      name        = node.name
-      zone        = node.zone
-      internal_ip = node.internal_ip
-      project_id  = var.project_id
+      name             = node.name
+      zone             = node.zone
+      internal_ip      = node.internal_ip
+      operating_system = var.k3s_nodes[name].operating_system
+      project_id       = var.project_id
+      source_image     = var.k3s_nodes[name].source_image
     }
   }
 }

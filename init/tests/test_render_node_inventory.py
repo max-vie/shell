@@ -58,7 +58,12 @@ class TestRenderNodeInventory(unittest.TestCase):
                 "name": f"gcp-k3s-0{index}",
                 "zone": zone,
                 "internal_ip": f"10.77.0.20{index}",
+                "operating_system": "debian-13",
                 "project_id": "shell-platform",
+                "source_image": (
+                    "https://www.googleapis.com/compute/v1/projects/"
+                    "debian-cloud/global/images/debian-13-trixie-v20260826"
+                ),
             }
             for index, zone in enumerate(
                 ("europe-west4-a", "europe-west4-b", "europe-west4-c"),
@@ -73,6 +78,9 @@ class TestRenderNodeInventory(unittest.TestCase):
                 "vm_id": 319 + index,
                 "address": f"10.66.0.20{index}/24",
                 "node": "pve-01",
+                "operating_system": "debian-13",
+                "image_file_name": "debian-13-shell.qcow2",
+                "image_sha256": "a" * 64,
             }
             for index in range(1, 4)
         }
@@ -94,52 +102,49 @@ class TestRenderNodeInventory(unittest.TestCase):
         proxmox_host: dict[str, Any] | None = None,
         wrapped: bool = False,
     ) -> SimpleNamespace:
-        # Test both `tofu output -json NAME` maps and complete output objects;
-        # temporary files keep the tests independent from .local state.
-        values = [
-            (
-                "shared.json",
-                self.shared_nodes() if shared is None else shared,
-                "shared_nodes",
-            ),
-            (
-                "gcp-k3s.json",
-                self.gcp_k3s_nodes() if gcp_k3s is None else gcp_k3s,
-                "k3s_nodes",
-            ),
-            (
-                "proxmox-k3s.json",
-                self.proxmox_k3s_nodes() if proxmox_k3s is None else proxmox_k3s,
-                "nodes",
-            ),
-            (
-                "proxmox-host.json",
-                self.proxmox_host() if proxmox_host is None else proxmox_host,
-                None,
-            ),
-        ]
-        paths: list[Path] = []
-        for filename, value, key in values:
-            path = root / filename
-            payload = (
+        # GCP K3s requires the complete output bundle so the API endpoint and
+        # nodes stay bound. Other roots also accept their named output form.
+        shared_value = self.shared_nodes() if shared is None else shared
+        gcp_k3s_value = self.gcp_k3s_nodes() if gcp_k3s is None else gcp_k3s
+        proxmox_value = (
+            self.proxmox_k3s_nodes() if proxmox_k3s is None else proxmox_k3s
+        )
+        proxmox_host_value = (
+            self.proxmox_host() if proxmox_host is None else proxmox_host
+        )
+
+        def envelope(value: Any, output_type: Any) -> dict[str, Any]:
+            return {"sensitive": False, "type": output_type, "value": value}
+
+        values = {
+            "shared.json": (
                 {
-                    key: {
-                        "sensitive": False,
-                        "type": ["map", ["object", {}]],
-                        "value": value,
-                    }
+                    "shared_nodes": envelope(
+                        shared_value, ["map", ["object", {}]]
+                    )
                 }
                 if wrapped
-                else value
-            )
-            if key is None and wrapped:
-                payload = {
-                    "proxmox_host": {
-                        "sensitive": False,
-                        "type": ["object", {}],
-                        "value": value,
-                    }
-                }
+                else shared_value
+            ),
+            "gcp-k3s.json": {
+                "api_address": envelope("10.77.0.200", "string"),
+                "api_endpoint": envelope("https://10.77.0.200:6443", "string"),
+                "k3s_nodes": envelope(gcp_k3s_value, ["map", ["object", {}]]),
+            },
+            "proxmox-k3s.json": (
+                {"nodes": envelope(proxmox_value, ["map", ["object", {}]])}
+                if wrapped
+                else proxmox_value
+            ),
+            "proxmox-host.json": (
+                {"proxmox_host": envelope(proxmox_host_value, ["object", {}])}
+                if wrapped
+                else proxmox_host_value
+            ),
+        }
+        paths: list[Path] = []
+        for filename, payload in values.items():
+            path = root / filename
             path.write_text(json.dumps(payload), encoding="utf-8")
             paths.append(path)
         return SimpleNamespace(
@@ -201,8 +206,29 @@ class TestRenderNodeInventory(unittest.TestCase):
             hostvars["delivery-01"]["shell_operating_system"], "debian-13"
         )
         self.assertEqual(hostvars["gcp-k3s-01"]["shell_transport"], "gcp_iap")
+        self.assertEqual(
+            hostvars["gcp-k3s-01"]["shell_operating_system"], "debian-13"
+        )
         self.assertEqual(hostvars["gcp-k3s-01"]["gcp_project_id"], "shell-platform")
         self.assertEqual(hostvars["proxmox-k3s-01"]["proxmox_vm_id"], 320)
+        self.assertEqual(
+            hostvars["proxmox-k3s-01"]["shell_operating_system"], "debian-13"
+        )
+        groups = value["all"]["children"]["shell_nodes"]["children"]
+        self.assertEqual(
+            groups["gcp_k3s_servers"]["vars"],
+            {
+                "shell_inventory_k3s_api_address": "10.77.0.200",
+                "shell_inventory_k3s_api_endpoint": "https://10.77.0.200:6443",
+                "shell_inventory_k3s_api_host": "10.77.0.200",
+            },
+        )
+        self.assertEqual(
+            groups["proxmox_k3s_servers"]["vars"][
+                "shell_inventory_k3s_api_endpoint"
+            ],
+            "https://10.66.0.200:6443",
+        )
         self.assertEqual(
             value["all"]["children"]["proxmox_host"]["hosts"]["proxmox-host"][
                 "shell_transport"
@@ -233,6 +259,52 @@ class TestRenderNodeInventory(unittest.TestCase):
             args.shared_nodes_file.write_text(json.dumps(payload), encoding="utf-8")
             with self.assertRaisesRegex(renderer.InventoryError, "malformed"):
                 renderer.build_inventory(args)
+
+    def test_gcp_k3s_requires_complete_non_sensitive_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            args = self.args(Path(temporary))
+            payload = json.loads(args.gcp_k3s_file.read_text(encoding="utf-8"))
+            payload.pop("api_endpoint")
+            args.gcp_k3s_file.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(renderer.InventoryError, "exactly"):
+                renderer.build_inventory(args)
+
+            args = self.args(Path(temporary))
+            payload = json.loads(args.gcp_k3s_file.read_text(encoding="utf-8"))
+            payload["k3s_nodes"]["sensitive"] = True
+            args.gcp_k3s_file.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(renderer.InventoryError, "sensitive"):
+                renderer.build_inventory(args)
+
+            args = self.args(Path(temporary))
+            payload = json.loads(args.gcp_k3s_file.read_text(encoding="utf-8"))
+            payload["api_endpoint"]["future"] = True
+            args.gcp_k3s_file.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(renderer.InventoryError, "malformed"):
+                renderer.build_inventory(args)
+
+    def test_gcp_k3s_endpoint_must_match_its_address(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            args = self.args(Path(temporary))
+            payload = json.loads(args.gcp_k3s_file.read_text(encoding="utf-8"))
+            payload["api_endpoint"]["value"] = "https://10.77.0.199:6443"
+            args.gcp_k3s_file.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(renderer.InventoryError, "does not match"):
+                renderer.build_inventory(args)
+
+            for address in ("10.77.0.0", "10.77.0.255", "10.77.0.201"):
+                with self.subTest(address=address):
+                    args = self.args(Path(temporary))
+                    payload = json.loads(
+                        args.gcp_k3s_file.read_text(encoding="utf-8")
+                    )
+                    payload["api_address"]["value"] = address
+                    payload["api_endpoint"]["value"] = f"https://{address}:6443"
+                    args.gcp_k3s_file.write_text(
+                        json.dumps(payload), encoding="utf-8"
+                    )
+                    with self.assertRaisesRegex(renderer.InventoryError, "unreserved"):
+                        renderer.build_inventory(args)
 
     def test_complete_host_output_requires_expected_key(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -273,8 +345,37 @@ class TestRenderNodeInventory(unittest.TestCase):
 
         shared = self.shared_nodes()
         del shared["delivery-01"]["operating_system"]
-        with self.assertRaisesRegex(renderer.InventoryError, "operating_system"):
+        with self.assertRaisesRegex(renderer.InventoryError, "output shape"):
             self.build(shared=shared)
+
+    def test_k3s_image_and_operating_system_drift_is_rejected(self) -> None:
+        gcp_k3s = self.gcp_k3s_nodes()
+        gcp_k3s["gcp-k3s-01"]["operating_system"] = "almalinux-9"
+        with self.assertRaisesRegex(renderer.InventoryError, "operating system"):
+            self.build(gcp_k3s=gcp_k3s)
+
+        gcp_k3s = self.gcp_k3s_nodes()
+        gcp_k3s["gcp-k3s-01"]["source_image"] = (
+            "https://www.googleapis.com/compute/v1/projects/other-cloud/"
+            "global/images/debian-13"
+        )
+        with self.assertRaisesRegex(renderer.InventoryError, "official Debian"):
+            self.build(gcp_k3s=gcp_k3s)
+
+        proxmox_k3s = self.proxmox_k3s_nodes()
+        proxmox_k3s["proxmox-k3s-01"]["image_sha256"] = "invalid"
+        with self.assertRaisesRegex(renderer.InventoryError, "checksum"):
+            self.build(proxmox_k3s=proxmox_k3s)
+
+        proxmox_k3s = self.proxmox_k3s_nodes()
+        proxmox_k3s["proxmox-k3s-01"]["operating_system"] = "almalinux-9"
+        with self.assertRaisesRegex(renderer.InventoryError, "operating system"):
+            self.build(proxmox_k3s=proxmox_k3s)
+
+        proxmox_k3s = self.proxmox_k3s_nodes()
+        proxmox_k3s["proxmox-k3s-01"]["image_file_name"] = "../image.qcow2"
+        with self.assertRaisesRegex(renderer.InventoryError, "file name"):
+            self.build(proxmox_k3s=proxmox_k3s)
 
     def test_invalid_gcp_zone_is_rejected(self) -> None:
         gcp_k3s = self.gcp_k3s_nodes()
@@ -428,6 +529,16 @@ class TestRenderNodeInventory(unittest.TestCase):
             invalid_utf8.write_bytes(b"\xff")
             with self.assertRaisesRegex(renderer.InventoryError, "UTF-8"):
                 renderer.load_json(invalid_utf8, "nodes")
+
+    def test_duplicate_json_keys_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            args = self.args(Path(temporary))
+            args.shared_nodes_file.write_text(
+                '{"identity-01":{},"identity-01":{}}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(renderer.InventoryError, "duplicate JSON key"):
+                renderer.build_inventory(args)
 
     @unittest.skipUnless(ANSIBLE_INVENTORY, "ansible-inventory unavailable")
     def test_generated_inventory_is_accepted_by_ansible(self) -> None:
