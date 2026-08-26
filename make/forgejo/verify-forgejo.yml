@@ -1,0 +1,282 @@
+---
+# Read-only verification for the MAKE-managed Forgejo and Caddy services.
+# This playbook requires delivery-01 to be running and never decrypts SUDO
+# handoffs or changes the guest.
+- name: Verify Forgejo and Caddy on delivery-01
+  hosts: delivery_nodes
+  gather_facts: false
+  become: true
+  pre_tasks:
+    - name: Load the path-only MAKE delivery handoff
+      ansible.builtin.include_vars:
+        file: "{{ make_delivery_vars_path }}"
+        name: make_delivery
+      become: false
+
+    - name: Validate the public delivery contracts
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../scripts/render_delivery_handoff.py"
+          - --check-only
+      changed_when: false
+      check_mode: false
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Load the public TAR delivery supply
+      ansible.builtin.include_vars:
+        file: "{{ make_delivery.tar_delivery_supply_path }}"
+        name: make_delivery_supply
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Require the fixed delivery target and HTTPS boundary
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == 'delivery-01'
+          - ansible_host == '10.77.0.211'
+          - shell_expected_address == '10.77.0.211'
+          - shell_role | default('') == 'delivery'
+          - shell_cluster | default('') == 'shared'
+          - shell_transport | default('') == 'gcp_iap'
+          - make_delivery.proof_status == 'source-only'
+          - make_delivery.service_node_id == 'delivery-01'
+          - make_delivery.service_fqdn == 'forgejo.shell.internal'
+          - make_delivery.service_port == 443
+          - make_delivery.service_transport == 'https'
+          - make_delivery_supply.contract_id == 'delivery-supply'
+          - make_delivery_supply.proof_status == 'source-reference-only'
+          - make_delivery_supply.runtime_image_platform == 'linux/amd64'
+      tags: [always]
+
+  tasks:
+    - name: Read the fixed rootless service account UID
+      ansible.builtin.command:
+        argv: [id, -u, shell-delivery]
+      changed_when: false
+      register: make_service_uid
+
+    - name: Require a numeric rootless service account UID
+      ansible.builtin.assert:
+        that:
+          - make_service_uid.stdout | trim is match('^[0-9]+$')
+
+    - name: Read the Forgejo user service state
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - --user
+          - shell-delivery
+          - --
+          - env
+          - HOME=/home/shell-delivery
+          - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+          - systemctl
+          - --user
+          - is-active
+          - forgejo.service
+      changed_when: false
+      register: make_forgejo_service
+
+    - name: Read the Caddy user service state
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - --user
+          - shell-delivery
+          - --
+          - env
+          - HOME=/home/shell-delivery
+          - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+          - systemctl
+          - --user
+          - is-active
+          - caddy.service
+      changed_when: false
+      register: make_caddy_service
+
+    - name: Require both delivery services to be active
+      ansible.builtin.assert:
+        that:
+          - make_forgejo_service.stdout.strip() == 'active'
+          - make_caddy_service.stdout.strip() == 'active'
+
+    - name: Read the rootless Podman containers
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - --user
+          - shell-delivery
+          - --
+          - env
+          - HOME=/home/shell-delivery
+          - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+          - podman
+          - ps
+          - --format
+          - "{{ '{{.Names}} {{.Image}}' }}"
+      changed_when: false
+      register: make_delivery_containers
+      no_log: true
+
+    - name: Require the two fixed service containers
+      ansible.builtin.assert:
+        that:
+          - "'forgejo ' in make_delivery_containers.stdout"
+          - "'caddy ' in make_delivery_containers.stdout"
+
+    - name: Verify the HTTPS endpoint with the public root CA
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --fail
+          - --silent
+          - --show-error
+          - --output
+          - /dev/null
+          - --cacert
+          - /usr/local/share/ca-certificates/shell-platform-ca.crt
+          - https://forgejo.shell.internal/
+      changed_when: false
+
+    - name: Verify the served certificate chain and hostname
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - s_client
+          - -connect
+          - forgejo.shell.internal:443
+          - -servername
+          - forgejo.shell.internal
+          - -CAfile
+          - /usr/local/share/ca-certificates/shell-platform-ca.crt
+          - -verify_return_error
+          - -verify_hostname
+          - forgejo.shell.internal
+          - -brief
+        stdin: ""
+        stdin_add_newline: false
+      changed_when: false
+      failed_when: false
+      register: make_served_tls
+
+    - name: Require certificate verification to pass
+      ansible.builtin.assert:
+        that:
+          - >-
+            'Verification: OK' in
+            (make_served_tls.stdout ~ make_served_tls.stderr)
+
+    - name: Read the installed public root CA digest
+      ansible.builtin.command:
+        argv:
+          - sha256sum
+          - /usr/local/share/ca-certificates/shell-platform-ca.crt
+      changed_when: false
+      register: make_root_ca_digest
+
+    - name: Require the installed public root CA matches the handoff
+      ansible.builtin.assert:
+        that:
+          - make_delivery.service_ca_sha256 in make_root_ca_digest.stdout
+          - >-
+            'Verified peername: forgejo.shell.internal' in
+            (make_served_tls.stdout ~ make_served_tls.stderr)
+
+    - name: Read the public root CA file state
+      ansible.builtin.stat:
+        path: /usr/local/share/ca-certificates/shell-platform-ca.crt
+      register: make_root_ca_state
+
+    - name: Require a regular public root CA with mode 0644
+      ansible.builtin.assert:
+        that:
+          - make_root_ca_state.stat.isreg | default(false)
+          - not make_root_ca_state.stat.islnk | default(false)
+          - make_root_ca_state.stat.mode == '0644'
+
+    - name: Read the Forgejo TLS file state
+      ansible.builtin.stat:
+        path: "/srv/shell-delivery/forgejo-tls/{{ item }}"
+      loop: [tls.crt, tls.key, ca.crt]
+      register: make_tls_files
+
+    - name: Require regular non-symlink TLS files with mode 0600
+      ansible.builtin.assert:
+        that:
+          - item.stat.isreg | default(false)
+          - not item.stat.islnk | default(false)
+          - item.stat.mode == '0600'
+      loop: "{{ make_tls_files.results }}"
+      loop_control:
+        label: "/srv/shell-delivery/forgejo-tls/{{ item.item }}"
+
+    - name: Read the Forgejo secret environment file state
+      ansible.builtin.stat:
+        path: /home/shell-delivery/.config/containers/systemd/forgejo.env
+      register: make_secret_file
+
+    - name: Require the secret environment file is private
+      ansible.builtin.assert:
+        that:
+          - make_secret_file.stat.isreg | default(false)
+          - not make_secret_file.stat.islnk | default(false)
+          - make_secret_file.stat.mode == '0600'
+
+    - name: Read the rootless Quadlet unit file states
+      ansible.builtin.stat:
+        path: "/home/shell-delivery/.config/containers/systemd/{{ item }}"
+      loop:
+        - forgejo.container
+        - caddy.container
+      register: make_quadlet_files
+
+    - name: Require regular non-symlink Quadlet units with mode 0644
+      ansible.builtin.assert:
+        that:
+          - item.stat.isreg | default(false)
+          - not item.stat.islnk | default(false)
+          - item.stat.mode == '0644'
+      loop: "{{ make_quadlet_files.results }}"
+      loop_control:
+        label: >-
+          /home/shell-delivery/.config/containers/systemd/{{ item.item }}
+
+    - name: Read the rootless Quadlet unit contents
+      ansible.builtin.slurp:
+        path: "{{ item.path }}"
+      loop:
+        - path: >-
+            /home/shell-delivery/.config/containers/systemd/forgejo.container
+          container: ContainerName=forgejo
+          service_label: Label=shell.platform/service=forgejo
+          expected_image: >-
+            Image={{ make_delivery_supply.images.forgejo.repository }}:{{
+            make_delivery_supply.images.forgejo.tag }}@{{
+            make_delivery_supply.images.forgejo.digest }}
+          required_line: >-
+            EnvironmentFile=/home/shell-delivery/.config/containers/systemd/forgejo.env
+        - path: >-
+            /home/shell-delivery/.config/containers/systemd/caddy.container
+          container: ContainerName=caddy
+          service_label: Label=shell.platform/service=caddy
+          expected_image: >-
+            Image={{ make_delivery_supply.images.caddy.repository }}:{{
+            make_delivery_supply.images.caddy.tag }}@{{
+            make_delivery_supply.images.caddy.digest }}
+          required_line: PublishPort=443:443
+      register: make_quadlet_contents
+
+    - name: Require the fixed digest-pinned Quadlet contents
+      ansible.builtin.assert:
+        that:
+          - item.item.container in (item.content | b64decode)
+          - item.item.service_label in (item.content | b64decode)
+          - item.item.required_line in (item.content | b64decode)
+          - item.item.expected_image in (item.content | b64decode)
+      loop: "{{ make_quadlet_contents.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"

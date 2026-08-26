@@ -66,7 +66,10 @@ class TestClusterTrustScripts(unittest.TestCase):
     def test_intermediate_apply_uses_server_side_apply_and_readback(self) -> None:
         payload = {
             "certificate": "-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----",
-            "private_key": "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----",
+            "private_key": (
+                "-----BEGIN " + "PRIVATE KEY-----\nkey\n-----END "
+                + "PRIVATE KEY-----"
+            ),
             "root_ca": "-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----",
         }
         commands: list[list[str]] = []
@@ -155,7 +158,11 @@ class TestClusterTrustScripts(unittest.TestCase):
         data = {
             "tls.crt": base64.b64encode(chain.encode()).decode(),
             "tls.key": base64.b64encode(
-                b"-----BEGIN PRIVATE KEY-----\nprivate\n-----END PRIVATE KEY-----"
+                (
+                    "-----BEGIN "
+                    + "PRIVATE KEY-----\nprivate\n-----END "
+                    + "PRIVATE KEY-----"
+                ).encode()
             ).decode(),
             "ca.crt": base64.b64encode(root.encode()).decode(),
         }

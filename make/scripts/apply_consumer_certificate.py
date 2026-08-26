@@ -34,7 +34,8 @@ CLUSTERS = {
 CERT_MANAGER_CRD = "certificates.cert-manager.io"
 CERT_MANAGER_NAMESPACE = "cert-manager"
 CLUSTER_ISSUER_NAME = "shell-cluster-intermediate"
-CONSUMER_SECRET_NAME = "forgejo-tls"
+# Fixed public resource name, not a credential.
+CONSUMER_SECRET_NAME = "forgejo-tls"  # nosec B105
 CERTIFICATE_PEM = re.compile(
     r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
     re.DOTALL,

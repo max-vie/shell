@@ -1,0 +1,636 @@
+---
+# MAKE owns the Forgejo and Caddy services on delivery-01. This playbook
+# consumes the path-only handoff and fixed TAR pins; SOPS values are decrypted
+# only during an explicitly requested mutation run and are never logged.
+- name: Deploy Forgejo and Caddy on delivery-01
+  hosts: delivery_nodes
+  gather_facts: false
+  become: true
+  vars:
+    make_forgejo_repository: codeberg.org/forgejo/forgejo
+    make_forgejo_tag: 16.0.3-rootless
+    make_caddy_repository: docker.io/library/caddy
+    make_caddy_tag: 2.11.4-alpine
+    make_service_user: shell-delivery
+    make_quadlet_directory: /home/shell-delivery/.config/containers/systemd
+    make_forgejo_environment_file: "{{ make_quadlet_directory }}/forgejo.env"
+    make_forgejo_admin_environment_file: >-
+      {{ make_quadlet_directory }}/forgejo-admin.env
+    make_service_root: /srv/shell-delivery
+  pre_tasks:
+    - name: Load the path-only MAKE delivery handoff
+      ansible.builtin.include_vars:
+        file: "{{ make_delivery_vars_path }}"
+        name: make_delivery
+      become: false
+
+    - name: Validate the current public delivery contracts
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../scripts/render_delivery_handoff.py"
+          - --check-only
+      changed_when: false
+      check_mode: false
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Load the public TAR delivery supply
+      ansible.builtin.include_vars:
+        file: "{{ make_delivery.tar_delivery_supply_path }}"
+        name: make_delivery_supply
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Load the public SUDO delivery input contract
+      ansible.builtin.include_vars:
+        file: "{{ make_delivery.sudo_delivery_input_contract_path }}"
+        name: make_delivery_inputs
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Require the fixed delivery handoff and image pins
+      ansible.builtin.assert:
+        that:
+          - make_delivery.proof_status == 'source-only'
+          - make_delivery.service_node_id == 'delivery-01'
+          - make_delivery.service_dns_domain == 'shell.internal'
+          - make_delivery.service_dns_server == '10.77.0.210'
+          - make_delivery.service_fqdn == 'forgejo.shell.internal'
+          - make_delivery.service_port == 443
+          - make_delivery.service_transport == 'https'
+          - make_service_user == 'shell-delivery'
+          - >-
+            make_quadlet_directory ==
+            '/home/shell-delivery/.config/containers/systemd'
+          - make_service_root == '/srv/shell-delivery'
+          - make_delivery.init_delivery_preview_path is string
+          - make_delivery.init_delivery_preview_path | length > 0
+          - make_delivery_supply.contract_id == 'delivery-supply'
+          - make_delivery_supply.proof_status == 'source-reference-only'
+          - make_delivery_supply.runtime_image_platform == 'linux/amd64'
+          - >-
+            make_delivery_supply.images.forgejo.repository ==
+            make_forgejo_repository
+          - make_delivery_supply.images.forgejo.tag == make_forgejo_tag
+          - >-
+            make_delivery_supply.images.forgejo.digest ==
+            'sha256:214f4ae63ee78be1e445e58573c88dc7215e72091210852e0df94eaac1a25685'
+          - >-
+            make_delivery_supply.images.caddy.repository ==
+            make_caddy_repository
+          - make_delivery_supply.images.caddy.tag == make_caddy_tag
+          - >-
+            make_delivery_supply.images.caddy.digest ==
+            'sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648'
+          - make_delivery_inputs.proof_status == 'source-only'
+          - make_delivery_inputs.private_custody.storage == 'sops-age'
+          - >-
+            make_delivery_inputs.private_custody.plaintext_values_tracked ==
+            false
+          - >-
+            make_delivery_inputs.private_inputs.bootstrap.path ==
+            '.local/sudo/delivery/bootstrap.sops.json'
+          - >-
+            make_delivery_inputs.private_inputs.forgejo_public_tls.path ==
+            '.local/sudo/delivery/forgejo-public-tls.sops.json'
+        fail_msg: The delivery handoff, SUDO inputs, or TAR image pins changed.
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    # A check-mode preview proves public source contracts only. In particular,
+    # it must not require or decrypt a private SOPS handoff.
+    - name: Stop before private input decryption in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+  tasks:
+    - name: Deploy the rootless delivery services
+      block:
+        - name: Mark the delivery mutation as started
+          ansible.builtin.set_fact:
+            make_delivery_mutation_started: true
+
+        - name: Read the fixed rootless service account UID
+          ansible.builtin.command:
+            argv: [id, -u, "{{ make_service_user }}"]
+          register: make_service_uid
+          changed_when: false
+          check_mode: false
+
+        - name: Require a numeric rootless service account UID
+          ansible.builtin.assert:
+            that:
+              - make_service_uid.stdout | trim is match('^[0-9]+$')
+
+        - name: Decrypt the Forgejo bootstrap handoff
+          ansible.builtin.command:
+            argv:
+              - sops
+              - --decrypt
+              - --output-type
+              - yaml
+              - "{{ make_delivery.sudo_delivery_bootstrap_path }}"
+          environment:
+            SOPS_AGE_KEY_FILE: "{{ make_delivery.age_key_path }}"
+          register: make_forgejo_bootstrap_raw
+          changed_when: false
+          check_mode: false
+          no_log: true
+          delegate_to: localhost
+          become: false
+
+        - name: Decrypt the Forgejo TLS handoff
+          ansible.builtin.command:
+            argv:
+              - sops
+              - --decrypt
+              - --output-type
+              - yaml
+              - "{{ make_delivery.sudo_forgejo_tls_path }}"
+          environment:
+            SOPS_AGE_KEY_FILE: "{{ make_delivery.age_key_path }}"
+          register: make_forgejo_tls_raw
+          changed_when: false
+          check_mode: false
+          no_log: true
+          delegate_to: localhost
+          become: false
+
+        - name: Parse the decrypted Forgejo inputs in memory
+          ansible.builtin.set_fact:
+            make_forgejo_bootstrap: >-
+              {{ make_forgejo_bootstrap_raw.stdout | from_yaml }}
+            make_forgejo_tls: >-
+              {{ make_forgejo_tls_raw.stdout | from_yaml }}
+          no_log: true
+
+        - name: Extract the Forgejo input values in memory
+          ansible.builtin.set_fact:
+            make_forgejo_bootstrap_values: >-
+              {{ make_forgejo_bootstrap.forgejo_bootstrap }}
+            make_forgejo_tls_values: >-
+              {{ make_forgejo_tls.forgejo_public_tls }}
+          no_log: true
+
+        - name: Require the Forgejo bootstrap and TLS input shapes
+          ansible.builtin.assert:
+            that:
+              - make_forgejo_bootstrap.schema_version == '1.0'
+              - make_forgejo_bootstrap.contract_id == 'delivery-input-contract'
+              - make_forgejo_bootstrap.class == 'forgejo_bootstrap'
+              - make_forgejo_bootstrap_values.admin_username | length > 0
+              - make_forgejo_bootstrap_values.admin_password | length > 0
+              - make_forgejo_bootstrap_values.security_secret_key | length > 0
+              - make_forgejo_bootstrap_values.internal_token | length > 0
+              - make_forgejo_bootstrap_values.jwt_secret | length > 0
+              - make_forgejo_tls.schema_version == '1.0'
+              - make_forgejo_tls.contract_id == 'delivery-input-contract'
+              - make_forgejo_tls.class == 'forgejo_public_tls'
+              - make_forgejo_tls.dns_sans == ['forgejo.shell.internal']
+              - make_forgejo_tls_values.certificate | length > 0
+              - make_forgejo_tls_values.private_key | length > 0
+              - make_forgejo_tls_values.root_ca | length > 0
+            fail_msg: The decrypted Forgejo input shape does not match SUDO.
+          no_log: true
+
+        - name: Bind the fixed image references and service input values
+          ansible.builtin.set_fact:
+            make_forgejo_image: >-
+              {{ make_forgejo_repository }}:{{ make_forgejo_tag }}@
+              {{ make_delivery_supply.images.forgejo.digest }}
+            make_caddy_image: >-
+              {{ make_caddy_repository }}:{{ make_caddy_tag }}@
+              {{ make_delivery_supply.images.caddy.digest }}
+            make_forgejo_secret_key: >-
+              {{ make_forgejo_bootstrap_values.security_secret_key }}
+            make_internal_token: >-
+              {{ make_forgejo_bootstrap_values.internal_token }}
+            make_forgejo_jwt_secret: >-
+              {{ make_forgejo_bootstrap_values.jwt_secret }}
+            make_forgejo_admin_username: >-
+              {{ make_forgejo_bootstrap_values.admin_username }}
+            make_forgejo_admin_password: >-
+              {{ make_forgejo_bootstrap_values.admin_password }}
+            make_forgejo_certificate: >-
+              {{ make_forgejo_tls_values.certificate }}
+            make_forgejo_private_key: >-
+              {{ make_forgejo_tls_values.private_key }}
+            make_forgejo_tls_root_ca: >-
+              {{ make_forgejo_tls_values.root_ca }}
+          no_log: true
+
+        - name: Allow rootless Caddy to bind the HTTPS port
+          ansible.builtin.copy:
+            dest: /etc/sysctl.d/90-shell-rootless-bind.conf
+            content: "net.ipv4.ip_unprivileged_port_start = 80\n"
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Reload rootless HTTPS bind setting
+
+        - name: Install the public SHELL root CA
+          ansible.builtin.copy:
+            src: "{{ make_delivery.service_ca_path }}"
+            dest: /usr/local/share/ca-certificates/shell-platform-ca.crt
+            owner: root
+            group: root
+            mode: "0644"
+          notify: Refresh the Debian CA bundle
+
+        - name: Read the installed public root CA digest
+          ansible.builtin.command:
+            argv:
+              - sha256sum
+              - /usr/local/share/ca-certificates/shell-platform-ca.crt
+          register: make_root_ca_digest
+          changed_when: false
+
+        - name: Require the installed public root CA digest
+          ansible.builtin.assert:
+            that:
+              - >-
+                make_delivery.service_ca_sha256 in make_root_ca_digest.stdout
+            fail_msg: The installed public root CA does not match the handoff.
+
+        - name: Create the rootless Quadlet directory
+          ansible.builtin.file:
+            path: "{{ make_quadlet_directory }}"
+            state: directory
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0700"
+
+        - name: Create the Forgejo and Caddy data directories
+          ansible.builtin.file:
+            path: "{{ make_service_root }}/{{ item }}"
+            state: directory
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0750"
+          loop:
+            - caddy-config
+            - caddy-data
+
+        - name: Create the rootless Forgejo data directory
+          ansible.builtin.file:
+            path: "{{ make_service_root }}/forgejo"
+            state: directory
+            owner: "200999"
+            group: "200999"
+            mode: "0750"
+
+        - name: Create the Forgejo TLS directory
+          ansible.builtin.file:
+            path: "{{ make_service_root }}/forgejo-tls"
+            state: directory
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0700"
+
+        - name: Write the Forgejo TLS files with private permissions
+          ansible.builtin.copy:
+            dest: "{{ make_service_root }}/forgejo-tls/{{ item.name }}"
+            content: "{{ item.value }}\n"
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0600"
+          loop:
+            - name: tls.crt
+              value: "{{ make_forgejo_certificate }}"
+            - name: tls.key
+              value: "{{ make_forgejo_private_key }}"
+            - name: ca.crt
+              value: "{{ make_forgejo_tls_root_ca }}"
+          no_log: true
+
+        - name: Write the Caddy reverse-proxy configuration
+          ansible.builtin.copy:
+            dest: "{{ make_service_root }}/caddy-config/Caddyfile"
+            content: |
+              forgejo.shell.internal {
+                tls /tls/tls.crt /tls/tls.key
+                reverse_proxy forgejo:3000
+              }
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0644"
+
+        - name: Write the Forgejo secret environment file
+          ansible.builtin.copy:
+            dest: "{{ make_forgejo_environment_file }}"
+            content: |
+              FORGEJO__security__SECRET_KEY={{ make_forgejo_secret_key }}
+              FORGEJO__security__INTERNAL_TOKEN={{ make_internal_token }}
+              FORGEJO__oauth2__JWT_SECRET={{ make_forgejo_jwt_secret }}
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0600"
+          no_log: true
+
+        - name: Write the Forgejo Quadlet unit
+          ansible.builtin.copy:
+            dest: "{{ make_quadlet_directory }}/forgejo.container"
+            content: |
+              [Unit]
+              Description=Forgejo web service
+              After=network-online.target
+              Wants=network-online.target
+
+              [Container]
+              Image={{ make_forgejo_image }}
+              ContainerName=forgejo
+              Network=forgejo-net
+              Volume=/srv/shell-delivery/forgejo:/var/lib/gitea
+              EnvironmentFile={{ make_forgejo_environment_file }}
+              Environment=FORGEJO__server__DOMAIN=forgejo.shell.internal
+              Environment=FORGEJO__server__ROOT_URL=https://forgejo.shell.internal/
+              Environment=FORGEJO__server__HTTP_PORT=3000
+              Environment=FORGEJO__security__INSTALL_LOCK=true
+              UserNS=keep-id
+              Label=shell.platform/owner=make
+              Label=shell.platform/service=forgejo
+
+              [Service]
+              Restart=on-failure
+
+              [Install]
+              WantedBy=default.target
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0644"
+
+        - name: Write the Caddy Quadlet unit
+          ansible.builtin.copy:
+            dest: "{{ make_quadlet_directory }}/caddy.container"
+            content: |
+              [Unit]
+              Description=Caddy reverse proxy for Forgejo
+              After=forgejo.service
+              Wants=forgejo.service
+
+              [Container]
+              Image={{ make_caddy_image }}
+              ContainerName=caddy
+              Network=forgejo-net
+              PublishPort=443:443
+              Volume=/srv/shell-delivery/caddy-config:/etc/caddy:ro
+              Volume=/srv/shell-delivery/caddy-data:/data
+              Volume=/srv/shell-delivery/forgejo-tls:/tls:ro
+              Label=shell.platform/owner=make
+              Label=shell.platform/service=caddy
+
+              [Service]
+              Restart=on-failure
+
+              [Install]
+              WantedBy=default.target
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0644"
+
+        - name: Pull the pinned Forgejo image
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - pull
+              - "{{ make_forgejo_image }}"
+          changed_when: false
+
+        - name: Pull the pinned Caddy image
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - pull
+              - "{{ make_caddy_image }}"
+          changed_when: false
+
+        - name: Reload the rootless user systemd manager
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - daemon-reload
+          changed_when: false
+
+        - name: Check for the delivery container network
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - network
+              - exists
+              - forgejo-net
+          register: make_network_exists
+          changed_when: false
+          failed_when: make_network_exists.rc not in [0, 1]
+
+        - name: Create the fixed delivery container network
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - network
+              - create
+              - forgejo-net
+          when: make_network_exists.rc == 1
+          changed_when: true
+
+        - name: Enable the rootless container restore service
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - enable
+              - --now
+              - podman-restart.service
+          changed_when: false
+
+        - name: Start Forgejo and Caddy
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - start
+              - forgejo.service
+              - caddy.service
+          changed_when: false
+
+        - name: Mark the delivery services as started
+          ansible.builtin.set_fact:
+            make_delivery_services_started: true
+
+        - name: Wait for the Forgejo HTTPS endpoint
+          ansible.builtin.command:
+            argv:
+              - curl
+              - --fail
+              - --silent
+              - --show-error
+              - --output
+              - /dev/null
+              - --cacert
+              - /usr/local/share/ca-certificates/shell-platform-ca.crt
+              - https://forgejo.shell.internal/
+          register: make_forgejo_https
+          changed_when: false
+          retries: 30
+          delay: 2
+          until: make_forgejo_https.rc == 0
+
+        - name: Write the short-lived Forgejo administrator input
+          ansible.builtin.copy:
+            dest: "{{ make_forgejo_admin_environment_file }}"
+            content: >-
+              FORGEJO_ADMIN_PASSWORD_B64={{
+              make_forgejo_admin_password | b64encode }}
+            owner: "{{ make_service_user }}"
+            group: "{{ make_service_user }}"
+            mode: "0600"
+          no_log: true
+
+        - name: Ensure the Forgejo administrator exists
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - podman
+              - exec
+              - --env-file
+              - "{{ make_forgejo_admin_environment_file }}"
+              - forgejo
+              - sh
+              - -ec
+              - >-
+                admin_password="$(printf '%s'
+                "$FORGEJO_ADMIN_PASSWORD_B64" | base64 -d)";
+                exec forgejo admin user create --username "$1"
+                --password "$admin_password"
+                --email admin@shell.internal --admin
+              - forgejo-admin
+              - "{{ make_forgejo_admin_username }}"
+          register: make_admin_create
+          changed_when: false
+          failed_when: make_admin_create.rc not in [0, 1]
+          no_log: true
+
+        - name: Remove the short-lived Forgejo administrator input
+          ansible.builtin.file:
+            path: "{{ make_forgejo_admin_environment_file }}"
+            state: absent
+          no_log: true
+
+      rescue:
+        - name: Stop services after an incomplete delivery mutation
+          ansible.builtin.command:
+            argv:
+              - runuser
+              - --user
+              - "{{ make_service_user }}"
+              - --
+              - env
+              - HOME=/home/shell-delivery
+              - "XDG_RUNTIME_DIR=/run/user/{{ make_service_uid.stdout | trim }}"
+              - systemctl
+              - --user
+              - stop
+              - forgejo.service
+              - caddy.service
+          when: make_delivery_services_started | default(false)
+          changed_when: false
+          failed_when: false
+
+        - name: Remove only the generated Quadlet units after failure
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ make_quadlet_directory }}/forgejo.container"
+            - "{{ make_quadlet_directory }}/caddy.container"
+          when: make_delivery_mutation_started | default(false)
+
+        - name: Remove only the generated secret and TLS files after failure
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ make_forgejo_environment_file }}"
+            - "{{ make_forgejo_admin_environment_file }}"
+            - "{{ make_service_root }}/forgejo-tls/tls.crt"
+            - "{{ make_service_root }}/forgejo-tls/tls.key"
+            - "{{ make_service_root }}/forgejo-tls/ca.crt"
+          when: make_delivery_mutation_started | default(false)
+          no_log: true
+
+        - name: Fail the delivery play after cleanup
+          ansible.builtin.fail:
+            msg: >-
+              Forgejo and Caddy delivery failed; generated service inputs were
+              cleaned up.
+
+  handlers:
+    - name: Reload rootless HTTPS bind setting
+      ansible.builtin.command:
+        argv: [sysctl, --load, /etc/sysctl.d/90-shell-rootless-bind.conf]
+      changed_when: false
+
+    - name: Refresh the Debian CA bundle
+      ansible.builtin.command:
+        argv: [update-ca-certificates]
+      changed_when: false
