@@ -26,6 +26,7 @@ PRIVATE_ROOT = ".local/sudo/delivery"
 PRIVATE_INPUTS = {
     "bootstrap": f"{PRIVATE_ROOT}/bootstrap.sops.json",
     "forgejo_public_tls": f"{PRIVATE_ROOT}/forgejo-public-tls.sops.json",
+    "forgejo_runner": f"{PRIVATE_ROOT}/forgejo-runner.sops.json",
     "age_key": f"{PRIVATE_ROOT}/age-key.txt",
 }
 PUBLIC_PATHS = {
@@ -44,6 +45,7 @@ HANDOFF_FIELDS = {
     "sudo_delivery_input_contract_path",
     "sudo_delivery_bootstrap_path",
     "sudo_forgejo_tls_path",
+    "sudo_forgejo_runner_path",
     "age_key_path",
     "tar_delivery_supply_path",
     "service_contract_path",
@@ -274,6 +276,10 @@ def validate_public(repository_root: Path = REPOSITORY_ROOT) -> dict[str, Any]:
         and private_inputs["forgejo_public_tls"]["path"]
         == PRIVATE_INPUTS["forgejo_public_tls"]
         and private_inputs["forgejo_public_tls"]["storage"] == "sops-age"
+        and private_inputs["forgejo_runner"]["path"]
+        == PRIVATE_INPUTS["forgejo_runner"]
+        and private_inputs["forgejo_runner"]["storage"] == "sops-age"
+        and private_inputs["forgejo_runner"]["file_mode"] == "0600"
         and private_inputs["age_key"]["path"] == PRIVATE_INPUTS["age_key"]
         and private_inputs["age_key"]["storage"] == "plaintext-age-identity"
         and private_inputs["age_key"]["consumer"] == "SOPS_AGE_KEY_FILE"
@@ -307,6 +313,7 @@ def validate_public(repository_root: Path = REPOSITORY_ROOT) -> dict[str, Any]:
         "sudo_delivery_input_contract_path": str(paths["sudo_input_contract"]),
         "sudo_delivery_bootstrap_path": str(root / PRIVATE_INPUTS["bootstrap"]),
         "sudo_forgejo_tls_path": str(root / PRIVATE_INPUTS["forgejo_public_tls"]),
+        "sudo_forgejo_runner_path": str(root / PRIVATE_INPUTS["forgejo_runner"]),
         "age_key_path": str(root / PRIVATE_INPUTS["age_key"]),
         "tar_delivery_supply_path": str(paths["tar_supply"]),
         "service_contract_path": str(paths["service_contract"]),

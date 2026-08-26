@@ -95,6 +95,18 @@ class TestAccessContracts(unittest.TestCase):
             document["private_inputs"]["forgejo_public_tls"]["path"],
         )
         self.assertEqual(
+            ".local/sudo/delivery/forgejo-runner.sops.json",
+            document["private_inputs"]["forgejo_runner"]["path"],
+        )
+        self.assertEqual(
+            "0600",
+            document["private_inputs"]["forgejo_runner"]["file_mode"],
+        )
+        self.assertEqual(
+            "sops-age",
+            document["classes"]["forgejo_runner"]["storage"],
+        )
+        self.assertEqual(
             "plaintext-age-identity",
             document["private_inputs"]["age_key"]["storage"],
         )

@@ -558,6 +558,12 @@ def validate_delivery_input_contract(
                 "storage": SOPS_AGE,
                 "ignored": True,
             },
+            "forgejo_runner": {
+                "path": ".local/sudo/delivery/forgejo-runner.sops.json",
+                "storage": SOPS_AGE,
+                "ignored": True,
+                "file_mode": "0600",
+            },
             "age_key": {
                 "path": ".local/sudo/delivery/age-key.txt",
                 "storage": PLAINTEXT_AGE_IDENTITY,
@@ -601,6 +607,7 @@ def validate_delivery_input_contract(
             },
             "forgejo_runner": {
                 "issuer": "forgejo-after-bootstrap",
+                "storage": SOPS_AGE,
                 "deployment_target": "delivery-01",
                 "required_keys": ["url", "uuid", "token"],
                 "one_time_bootstrap": True,
