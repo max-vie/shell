@@ -1,0 +1,63 @@
+---
+# MAKE owns this workload configuration. TAR supplies the locked chart and
+# controller image identities. The current INIT foundation uses Flannel, so
+# this first trust slice does not claim NetworkPolicy enforcement.
+crds:
+  enabled: true
+  keep: true
+
+clusterResourceNamespace: cert-manager
+
+prometheus:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+
+# Digest values are immutable 64-character identifiers; keep each scalar
+# intact so Helm receives the exact TAR pin.
+# yamllint disable rule:line-length
+image:
+  repository: quay.io/jetstack/cert-manager-controller
+  tag: v1.21.0
+  digest: sha256:e370f7800a53078e9d74324287a7d52b553864e55f5b4e521f911c3f6c7da203
+  pullPolicy: IfNotPresent
+
+webhook:
+  image:
+    repository: quay.io/jetstack/cert-manager-webhook
+    tag: v1.21.0
+    digest: sha256:c33cca307541e2d58861a55b1af5f390b7e19c8741e48b433693b73a7cce88b3
+    pullPolicy: IfNotPresent
+  networkPolicy:
+    enabled: false
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 128Mi}
+
+cainjector:
+  image:
+    repository: quay.io/jetstack/cert-manager-cainjector
+    tag: v1.21.0
+    digest: sha256:ad1dcc5b2fccc420f9b3fbee7ce8a869450c540fd4f2f41de2d95b1ca0c4d701
+    pullPolicy: IfNotPresent
+  networkPolicy:
+    enabled: false
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 128Mi}
+
+startupapicheck:
+  image:
+    repository: quay.io/jetstack/cert-manager-startupapicheck
+    tag: v1.21.0
+    digest: sha256:68b3c5029dc63e64a6b6435337d7dc0eb169f889a48a02d999d1f22f31865b33
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {cpu: 100m, memory: 64Mi}
+
+resources:
+  requests: {cpu: 10m, memory: 32Mi}
+  limits: {cpu: 100m, memory: 128Mi}
+# yamllint enable rule:line-length

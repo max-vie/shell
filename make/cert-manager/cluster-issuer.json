@@ -1,0 +1,16 @@
+{
+  "apiVersion": "cert-manager.io/v1",
+  "kind": "ClusterIssuer",
+  "metadata": {
+    "name": "shell-cluster-intermediate",
+    "annotations": {
+      "shell.platform/owner": "sudo",
+      "shell.platform/input": "kubernetes-ecosystem-input-contract"
+    }
+  },
+  "spec": {
+    "ca": {
+      "secretName": "shell-cluster-intermediate"
+    }
+  }
+}

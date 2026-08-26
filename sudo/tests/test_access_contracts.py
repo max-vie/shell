@@ -41,7 +41,10 @@ class TestAccessContracts(unittest.TestCase):
             "sudo/secrets/delivery-input-contract.json",
             "tar/manifests/delivery-supply.json",
             "make/contracts/service-node-handoff-requirements.json",
+            "make/contracts/cluster-trust-requirements.json",
             "man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
+            "sudo/secrets/kubernetes-ecosystem-input-contract.json",
+            "sudo/pki/shell-offline-root.crt.pem",
         ):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -63,6 +66,17 @@ class TestAccessContracts(unittest.TestCase):
     def test_current_access_contracts_validate(self) -> None:
         documents = validator.validate_contracts(self.root)
         self.assertEqual(set(documents), set(validator.CONTRACT_FILES))
+
+    def test_kubernetes_input_contract_validates_separate_private_handoffs(self) -> None:
+        validator.validate_kubernetes_input_contract(self.root)
+        path = self.root / "sudo/secrets/kubernetes-ecosystem-input-contract.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["clusters"]["gcp"]["handoff"] = ".local/sudo/wrong.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "cluster trust handoffs"
+        ):
+            validator.validate_kubernetes_input_contract(self.root)
 
     def test_rejects_unknown_fields_and_invalid_json(self) -> None:
         identity = self.altered("identity")
@@ -278,6 +292,7 @@ class TestAccessContracts(unittest.TestCase):
             "sudo/secrets/delivery-input-contract.json",
             "tar/manifests/delivery-supply.json",
             "make/contracts/service-node-handoff-requirements.json",
+            "make/contracts/cluster-trust-requirements.json",
             "man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
         )
         for relative in references:
@@ -336,7 +351,7 @@ class TestAccessContracts(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(
             stdout.getvalue(),
-            "validated 4 SUDO access profiles and 1 input contract\n",
+            "validated 4 SUDO access profiles and 2 input contracts\n",
         )
 
 

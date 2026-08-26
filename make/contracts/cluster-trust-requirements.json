@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "cluster-trust-requirements",
+  "description": "MAKE requirements for cert-manager trust in both K3s clusters.",
+  "policy_owner": "make",
+  "producer_owners": ["sudo", "tar", "init"],
+  "consumer_owners": ["make"],
+  "proof_status": "source-only",
+  "cluster_scope": ["gcp", "proxmox"],
+  "source_contracts": {
+    "kubernetes_profile": "sudo/access/kubernetes-ecosystem-profile.json",
+    "kubernetes_inputs": "sudo/secrets/kubernetes-ecosystem-input-contract.json",
+    "kubernetes_supply": "tar/manifests/kubernetes-ecosystem-supply.json",
+    "init_runtime_launcher": "init/scripts/run_k3s_runtime.py"
+  },
+  "kubeconfig_pattern": ".local/ansible/kubeconfig/{cluster}.yaml",
+  "resources": {
+    "issuer": {
+      "api_version": "cert-manager.io/v1",
+      "kind": "ClusterIssuer",
+      "name": "shell-cluster-intermediate",
+      "namespace": "cert-manager",
+      "secret_name": "shell-cluster-intermediate",
+      "owner": "sudo"
+    },
+    "consumer_certificate": {
+      "api_version": "cert-manager.io/v1",
+      "kind": "Certificate",
+      "name": "forgejo-tls",
+      "namespace": "default",
+      "secret_name": "forgejo-tls",
+      "issuer_name": "shell-cluster-intermediate",
+      "issuer_kind": "ClusterIssuer",
+      "dns_names": ["forgejo.shell.internal"],
+      "owner": "make"
+    }
+  },
+  "manifests": {
+    "issuer": "make/cert-manager/cluster-issuer.json",
+    "consumer_certificate": "make/certificates/forgejo-tls.json",
+    "values": "make/cert-manager/values.yaml"
+  },
+  "excluded_fields": ["credentials", "private_keys", "tokens", "kubeconfig_data"]
+}

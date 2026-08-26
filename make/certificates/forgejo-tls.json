@@ -1,0 +1,20 @@
+{
+  "apiVersion": "cert-manager.io/v1",
+  "kind": "Certificate",
+  "metadata": {
+    "name": "forgejo-tls",
+    "namespace": "default",
+    "annotations": {
+      "shell.platform/owner": "make",
+      "shell.platform/issuer": "shell-cluster-intermediate"
+    }
+  },
+  "spec": {
+    "secretName": "forgejo-tls",
+    "issuerRef": {
+      "name": "shell-cluster-intermediate",
+      "kind": "ClusterIssuer"
+    },
+    "dnsNames": ["forgejo.shell.internal"]
+  }
+}

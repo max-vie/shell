@@ -23,6 +23,7 @@ CONTRACT_VERSIONS = {
     "freeipa-host-profile": "2.0.0",
     "identity-model": "1.0.0",
     "kubernetes-ecosystem-profile": "1.0.0",
+    "kubernetes-ecosystem-input-contract": "1.0.0",
 }
 COMMON_FIELDS = {
     "schema_version",
@@ -641,8 +642,94 @@ def validate_kubernetes(document: dict[str, Any], repository_root: Path) -> None
                 "status": "not-defined",
             },
             "service_endpoints": {"owner": "make", "status": "not-defined"},
+            "cluster_trust": {
+                "owner": "make",
+                "status": "source-defined",
+                "contract": "make/contracts/cluster-trust-requirements.json",
+                "handoff_status": "not-defined",
+            },
         },
         "Kubernetes required contracts changed",
+    )
+    require_reference(
+        document["required_contracts"]["cluster_trust"]["contract"],
+        expected="make/contracts/cluster-trust-requirements.json",
+        repository_root=repository_root,
+        label="Kubernetes cluster-trust contract",
+    )
+
+
+def validate_kubernetes_input_contract(repository_root: Path) -> None:
+    label = "Kubernetes ecosystem input contract"
+    path = repository_root / "sudo/secrets/kubernetes-ecosystem-input-contract.json"
+    document = read_json_object(path, label, repository_root=repository_root)
+    require_common(
+        document,
+        label=label,
+        contract_id="kubernetes-ecosystem-input-contract",
+        consumers=["make"],
+        fields={"private_custody", "public_trust", "clusters"},
+    )
+    require(
+        document["private_custody"]
+        == {
+            "root": ".local/sudo/kubernetes",
+            "storage": "sops-age",
+            "ignored": True,
+            "directory_mode": "0700",
+            "file_mode": "0600",
+            "plaintext_values_tracked": False,
+        },
+        "Kubernetes private custody changed",
+    )
+    public_trust = document["public_trust"]
+    require(
+        isinstance(public_trust, dict)
+        and public_trust
+        == {
+            "root_certificate": "sudo/pki/shell-offline-root.crt.pem",
+            "tracked": True,
+            "issuer": "shell-offline-root",
+        },
+        "Kubernetes public trust changed",
+    )
+    root_certificate = repository_root / public_trust["root_certificate"]
+    root_path = resolve_repository_file(
+        root_certificate,
+        repository_root=repository_root,
+        label="Kubernetes public root certificate",
+    )
+    try:
+        root_contents = root_path.read_text(encoding="ascii")
+    except (OSError, UnicodeError) as error:
+        raise AccessContractError(
+            "Kubernetes public root certificate is unreadable"
+        ) from error
+    require(
+        root_contents.startswith("-----BEGIN CERTIFICATE-----")
+        and root_contents.rstrip().endswith("-----END CERTIFICATE-----")
+        and "PRIVATE KEY" not in root_contents,
+        "Kubernetes public root certificate is not public PEM data",
+    )
+    require(
+        document["clusters"]
+        == {
+            "gcp": {
+                "handoff": ".local/sudo/kubernetes/gcp/cluster-intermediate.sops.json",
+                "deployment_target": "gcp",
+                "storage": "sops-age",
+                "required_keys": ["certificate", "private_key", "root_ca"],
+                "input_phase": "pre-issuer",
+            },
+            "proxmox": {
+                "handoff": ".local/sudo/kubernetes/proxmox/cluster-intermediate.sops.json",
+                "deployment_target": "proxmox",
+                "storage": "sops-age",
+                "required_keys": ["certificate", "private_key", "root_ca"],
+                "input_phase": "pre-issuer",
+            },
+        },
+        "Kubernetes cluster trust handoffs changed",
     )
 
 
@@ -665,6 +752,7 @@ def validate_contracts(
     validate_delivery(documents["delivery"], repository_root)
     validate_delivery_input_contract(repository_root)
     validate_kubernetes(documents["kubernetes"], repository_root)
+    validate_kubernetes_input_contract(repository_root)
     return documents
 
 
@@ -674,7 +762,7 @@ def main() -> int:
     except AccessContractError as error:
         print(f"access contract validation failed: {error}", file=sys.stderr)
         return 2
-    print(f"validated {len(documents)} SUDO access profiles and 1 input contract")
+    print(f"validated {len(documents)} SUDO access profiles and 2 input contracts")
     return 0
 
 

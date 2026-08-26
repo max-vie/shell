@@ -26,6 +26,12 @@
     "service_endpoints": {
       "owner": "make",
       "status": "not-defined"
+    },
+    "cluster_trust": {
+      "owner": "make",
+      "status": "source-defined",
+      "contract": "make/contracts/cluster-trust-requirements.json",
+      "handoff_status": "not-defined"
     }
   }
 }
