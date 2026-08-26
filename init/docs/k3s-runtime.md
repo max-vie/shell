@@ -11,26 +11,36 @@ The runtime playbooks require values from separate private SUDO, TAR, and INIT
 handoffs:
 
 - `shell_k3s_cluster_name`: `gcp` or `proxmox`.
-- `shell_k3s_target_group`: one rendered cluster group only.
+- `shell_k3s_target_group`: the exact matching rendered cluster group. There
+  is no default target.
 - `shell_k3s_api_endpoint`: an HTTPS endpoint ending in `:6443`.
 - `shell_k3s_api_host`: the endpoint host used for the K3s TLS SAN.
 - `shell_k3s_version`: the pinned K3s version reported by the binary.
 - `shell_k3s_binary_path` and `shell_k3s_binary_sha256`: the private TAR
   artifact and its lowercase SHA-256 digest.
-- `shell_k3s_token_path`: a private SUDO server-token file path.
 - `shell_k3s_pod_cidr` and `shell_k3s_service_cidr`: distinct cluster ranges.
 - Proxmox uses API VIP `10.66.0.200`, a private INIT guest-interface input,
   and a private TAR Kube-VIP image digest.
 
 SUDO supplies one separate short server token for each cluster at private
-ignored paths. The first server uses the short form because its self-signed
-certificate authority does not exist until startup. K3s later writes secure
-token material that must remain protected and be backed up with the matching
-datastore. Its handling rules live in the
+ignored paths. INIT derives the fixed token path from the selected cluster and
+requires exactly 64 lowercase hexadecimal characters; callers cannot supply a
+different token path. The first server uses the short form because its
+self-signed certificate authority does not exist until startup. K3s later
+writes secure token material that must remain protected and be backed up with
+the matching datastore. Its handling rules live in the
 [`runtime.md`](runtime.md) guide. The input file and generated kubeconfig
 remain under private ignored state described in that guide.
 
 ## Runtime behavior
+
+The shared preflight rejects an invented group, a cluster/group mismatch, an
+altered or reordered node set, or a partial host selection when it runs.
+Inventory hosts must carry the expected K3s role, cluster, literal address,
+transport, and Debian 13 metadata.
+
+The first node is always `*-k3s-01`, which preserves the embedded-etcd seed
+role.
 
 The configuration playbook assumes the Debian guest baseline has already been
 applied. It installs the checksum-verified K3s binary, writes a mode-0600
@@ -62,3 +72,8 @@ separate lifecycle decisions.
 Kubeconfig output is written only under ignored `.local/ansible/kubeconfig/`
 state. Live execution, guest startup, OpenTofu changes, and cluster proof
 require separate approval.
+
+Direct playbook selectors can bypass in-play gates. Treat zero-host runs,
+`--start-at-task`, skipped preflight tasks, and direct playbook commands as
+unsupported evidence. Live K3s execution remains unauthorized until a fixed
+controller launcher closes that boundary.

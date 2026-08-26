@@ -1,0 +1,62 @@
+---
+# Validate every rendered host before the first serial batch can connect, read
+# a token, or change a guest.
+- name: Require the exact ordered K3s group
+  ansible.builtin.assert:
+    that:
+      - shell_k3s_cluster_name in ['gcp', 'proxmox']
+      - >-
+        (shell_k3s_cluster_name == 'gcp' and
+         shell_k3s_target_group == 'gcp_k3s_servers') or
+        (shell_k3s_cluster_name == 'proxmox' and
+         shell_k3s_target_group == 'proxmox_k3s_servers')
+      - shell_k3s_target_group in groups
+      - >-
+        (shell_k3s_cluster_name == 'gcp' and
+         groups[shell_k3s_target_group] ==
+         ['gcp-k3s-01', 'gcp-k3s-02', 'gcp-k3s-03']) or
+        (shell_k3s_cluster_name == 'proxmox' and
+         groups[shell_k3s_target_group] ==
+         ['proxmox-k3s-01', 'proxmox-k3s-02', 'proxmox-k3s-03'])
+      - ansible_play_hosts_all == groups[shell_k3s_target_group]
+      - shell_k3s_api_endpoint == shell_inventory_k3s_api_endpoint
+      - shell_k3s_api_host == shell_inventory_k3s_api_host
+    fail_msg: >-
+      Select exactly one complete ordered rendered K3s cluster and its
+      OpenTofu-owned API endpoint.
+  become: false
+  run_once: true
+
+- name: Require every K3s inventory host before the serial run
+  ansible.builtin.assert:
+    that:
+      - >-
+        hostvars[item].shell_expected_address == {
+          'gcp-k3s-01': '10.77.0.201',
+          'gcp-k3s-02': '10.77.0.202',
+          'gcp-k3s-03': '10.77.0.203',
+          'proxmox-k3s-01': '10.66.0.201',
+          'proxmox-k3s-02': '10.66.0.202',
+          'proxmox-k3s-03': '10.66.0.203'
+        }[item]
+      - hostvars[item].ansible_host == hostvars[item].shell_expected_address
+      - hostvars[item].shell_role | default('') == 'k3s'
+      - hostvars[item].shell_cluster | default('') == shell_k3s_cluster_name
+      - hostvars[item].shell_operating_system | default('') == 'debian-13'
+      - >-
+        (shell_k3s_cluster_name == 'gcp' and
+         hostvars[item].shell_transport | default('') == 'gcp_iap' and
+         hostvars[item].gcp_project_id is
+         match('^[a-z][a-z0-9-]{4,28}[a-z0-9]$') and
+         hostvars[item].gcp_zone is
+         match('^[a-z][a-z0-9-]+[0-9]-[a-z]$')) or
+        (shell_k3s_cluster_name == 'proxmox' and
+         hostvars[item].shell_transport | default('') == 'proxmox_ssh' and
+         hostvars[item].proxmox_host == 'proxmox-host' and
+         hostvars[item].proxmox_host_address == '10.77.0.220')
+    fail_msg: >-
+      {{ item }} does not match its literal K3s address, operating system,
+      transport, or connection route.
+  become: false
+  loop: "{{ groups[shell_k3s_target_group] }}"
+  run_once: true

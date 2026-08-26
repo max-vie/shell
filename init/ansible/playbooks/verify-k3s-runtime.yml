@@ -2,20 +2,20 @@
 # Read-only K3s foundation verification. Run it against one cluster group at
 # a time; it does not inspect or change workloads owned by MAKE.
 - name: Verify each K3s server runtime
-  hosts: "{{ shell_k3s_target_group | default('gcp_k3s_servers') }}"
+  hosts: "{{ shell_k3s_target_group }}"
   serial: 1
   gather_facts: false
   any_errors_fatal: true
   become: true
   vars_files:
     - ../vars/k3s.yml
-  tasks:
+  pre_tasks:
+    - name: Validate the complete K3s target
+      ansible.builtin.import_tasks: tasks/require-k3s-target.yml
+
     - name: Require the selected K3s cluster contract
       ansible.builtin.assert:
         that:
-          - shell_k3s_cluster_name is defined
-          - shell_k3s_target_group in groups
-          - groups[shell_k3s_target_group] | length == 3
           - shell_k3s_api_endpoint is defined
           - shell_k3s_api_endpoint is match('^https://[A-Za-z0-9.-]+:6443$')
           - shell_k3s_api_host is defined
@@ -38,6 +38,8 @@
           - not (shell_k3s_api_vip_enabled | bool)
         fail_msg: The direct-GCP verification must not use the Proxmox API VIP.
       when: shell_k3s_target_group == 'gcp_k3s_servers'
+
+  tasks:
 
     - name: Wait for the selected K3s guests
       ansible.builtin.wait_for_connection:
@@ -101,11 +103,15 @@
           configuration, token, kubeconfig, or embedded-etcd contract.
 
 - name: Verify the K3s cluster endpoint and node set
-  hosts: "{{ shell_k3s_target_group | default('gcp_k3s_servers') }}"
+  hosts: "{{ shell_k3s_target_group }}"
   gather_facts: false
   become: true
   vars_files:
     - ../vars/k3s.yml
+  pre_tasks:
+    - name: Validate the complete K3s target
+      ansible.builtin.import_tasks: tasks/require-k3s-target.yml
+
   tasks:
     - name: Wait for every declared K3s node to become Ready
       ansible.builtin.command:
@@ -145,7 +151,8 @@
             groups[shell_k3s_target_group] | sort
           - shell_k3s_observed_versions | length == 3
           - >-
-            shell_k3s_observed_versions | select('search', shell_k3s_version) |
+            shell_k3s_observed_versions |
+            select('equalto', shell_k3s_version) |
             list | length == 3
         fail_msg: >-
           The live K3s node set or version does not match the private contract.

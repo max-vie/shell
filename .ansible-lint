@@ -1,2 +1,6 @@
 ---
 profile: production
+# Syntax-parser fixtures only; K3s playbooks retain no runtime target default.
+extra_vars:
+  shell_k3s_cluster_name: gcp
+  shell_k3s_target_group: gcp_k3s_servers
