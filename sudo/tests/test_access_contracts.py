@@ -107,6 +107,19 @@ class TestAccessContracts(unittest.TestCase):
             document["classes"]["forgejo_runner"]["storage"],
         )
         self.assertEqual(
+            ".local/sudo/delivery/forgejo-repository.sops.json",
+            document["private_inputs"]["forgejo_repository"]["path"],
+        )
+        self.assertEqual(
+            "0600",
+            document["private_inputs"]["forgejo_repository"]["file_mode"],
+        )
+        self.assertTrue(document["classes"]["forgejo_repository"]["one_time_bootstrap"])
+        self.assertEqual(
+            "explicit-approved",
+            document["classes"]["forgejo_repository"]["rotation"],
+        )
+        self.assertEqual(
             "plaintext-age-identity",
             document["private_inputs"]["age_key"]["storage"],
         )
@@ -129,6 +142,18 @@ class TestAccessContracts(unittest.TestCase):
         path.write_text(json.dumps(document), encoding="utf-8")
         with self.assertRaisesRegex(
             validator.AccessContractError, "private custody"
+        ):
+            validator.validate_delivery_input_contract(self.root)
+
+        document = json.loads(
+            (
+                SOURCE_ROOT / "sudo/secrets/delivery-input-contract.json"
+            ).read_text(encoding="utf-8")
+        )
+        document["classes"]["forgejo_repository"]["rotation"] = "automatic"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "input classes changed"
         ):
             validator.validate_delivery_input_contract(self.root)
 

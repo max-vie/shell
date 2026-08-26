@@ -33,6 +33,10 @@ class TestDeliveryHandoff(unittest.TestCase):
             document["sudo_forgejo_runner_path"],
         )
         self.assertEqual(
+            str(SOURCE_ROOT / ".local/sudo/delivery/forgejo-repository.sops.json"),
+            document["sudo_forgejo_repository_path"],
+        )
+        self.assertEqual(
             str(SOURCE_ROOT / ".local/ansible/connection-inventory.yml"),
             document["init_connection_inventory_path"],
         )
@@ -88,6 +92,9 @@ class TestDeliveryHandoff(unittest.TestCase):
             )
             document["sudo_forgejo_runner_path"] = str(
                 SOURCE_ROOT / ".local/sudo/delivery/forgejo-runner.sops.json"
+            )
+            document["sudo_forgejo_repository_path"] = str(
+                SOURCE_ROOT / ".local/sudo/delivery/forgejo-repository.sops.json"
             )
             document["service_ca_sha256"] = "0" * 64
             output.write_text(json.dumps(document), encoding="utf-8")

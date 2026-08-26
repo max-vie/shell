@@ -96,7 +96,7 @@ class TestForgejoPlaybooks(unittest.TestCase):
 
     def test_make_checks_playbooks_and_keeps_verify_read_only(self) -> None:
         source = MAKEFILE.read_text(encoding="utf-8")
-        self.assertIn("check: test trust-preview runner-check", source)
+        self.assertIn("check: test trust-preview repository-check", source)
         self.assertIn("forgejo-verify: delivery-handoff-validate", source)
         self.assertIn("forgejo-preview: delivery-handoff-validate", source)
         self.assertNotIn("forgejo-verify: delivery-handoff\n", source)
@@ -105,7 +105,13 @@ class TestForgejoPlaybooks(unittest.TestCase):
         self.assertIn("runner-verify", source)
         self.assertIn("--validate-only", source)
         self.assertIn('--approval "$(APPROVAL)"', source)
-        self.assertNotIn("--bootstrap-sops", source)
+        self.assertIn("repository-register", source)
+        self.assertIn("repository-rotate", source)
+        self.assertIn("repository-verify", source)
+        self.assertIn("environment-gcp/make/forgejo-repository", source)
+        self.assertIn("register_forgejo_repository.py", source)
+        self.assertIn("repository-check: runner-check", source)
+        self.assertIn("--repository-sops", source)
         self.assertGreaterEqual(source.count("--validate --output"), 2)
 
 

@@ -564,6 +564,12 @@ def validate_delivery_input_contract(
                 "ignored": True,
                 "file_mode": "0600",
             },
+            "forgejo_repository": {
+                "path": ".local/sudo/delivery/forgejo-repository.sops.json",
+                "storage": SOPS_AGE,
+                "ignored": True,
+                "file_mode": "0600",
+            },
             "age_key": {
                 "path": ".local/sudo/delivery/age-key.txt",
                 "storage": PLAINTEXT_AGE_IDENTITY,
@@ -615,10 +621,13 @@ def validate_delivery_input_contract(
             },
             "forgejo_repository": {
                 "issuer": "forgejo-after-bootstrap",
+                "storage": SOPS_AGE,
                 "deployment_target": "delivery-node-only",
                 "transport": "https",
                 "repository_url": "https://forgejo.shell.internal/shell/make.git",
                 "required_keys": ["url", "username", "api_token"],
+                "one_time_bootstrap": True,
+                "rotation": "explicit-approved",
                 "input_phase": "post-service",
             },
         },

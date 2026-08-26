@@ -23,6 +23,9 @@ DELIVERY_VERIFY_PLAYBOOK := $(MAKE_ROOT)/forgejo/verify-forgejo.yml
 DELIVERY_SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_delivery_supply.py
 RUNNER_REGISTER_SCRIPT := $(MAKE_ROOT)/scripts/register_forgejo_runner.py
 RUNNER_HANDOFF := $(REPOSITORY_ROOT)/.local/sudo/delivery/forgejo-runner.sops.json
+REPOSITORY_REGISTER_SCRIPT := $(MAKE_ROOT)/scripts/register_forgejo_repository.py
+REPOSITORY_HANDOFF := $(REPOSITORY_ROOT)/.local/sudo/delivery/forgejo-repository.sops.json
+REPOSITORY_APPROVAL := environment-gcp/make/forgejo-repository
 
 TRUST_VALIDATOR := $(MAKE_ROOT)/scripts/validate_cluster_trust.py
 INTERMEDIATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_cluster_intermediate.py
@@ -30,9 +33,9 @@ CERTIFICATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_consumer_certificate.py
 SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_kubernetes_supply.py
 TRUST_VALUES := $(MAKE_ROOT)/cert-manager/values.yaml
 
-.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify
+.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify
 
-check: test trust-preview runner-check
+check: test trust-preview repository-check
 
 test:
 	$(PYTHON) -m unittest discover -s $(MAKE_ROOT)/tests -p 'test_*.py'
@@ -123,3 +126,39 @@ runner-apply:
 runner-verify: delivery-handoff-validate
 	$(PYTHON) "$(RUNNER_REGISTER_SCRIPT)" --validate-only --runner-sops "$(RUNNER_HANDOFF)" --age-key "$(REPOSITORY_ROOT)/.local/sudo/delivery/age-key.txt"
 	$(ANSIBLE_PLAYBOOK) $(DELIVERY_INVENTORY_ARGS) "$(DELIVERY_VERIFY_PLAYBOOK)" -e make_delivery_vars_path="$(MAKE_DELIVERY_HANDOFF_ABS)"
+
+# Repository checks are source-only and keep the credential handoff optional.
+repository-check: runner-check
+	$(PYTHON) -m unittest $(MAKE_ROOT)/tests/test_register_forgejo_repository.py
+
+# Repository creation and the seed push require a separate explicit approval.
+repository-register:
+	@test "$(APPROVAL)" = "$(REPOSITORY_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/forgejo-repository' >&2; exit 2; }
+	$(PYTHON) "$(REPOSITORY_REGISTER_SCRIPT)" \
+		--bootstrap-sops "$(REPOSITORY_ROOT)/.local/sudo/delivery/bootstrap.sops.json" \
+		--age-key "$(REPOSITORY_ROOT)/.local/sudo/delivery/age-key.txt" \
+		--repository-sops "$(REPOSITORY_HANDOFF)" \
+		--inventory "$(INIT_DELIVERY_INVENTORY)" \
+		--inventory "$(INIT_CONNECTION_INVENTORY)" \
+		--approval "$(APPROVAL)"
+
+# Explicit rotation revokes the prior named token and replaces the handoff.
+repository-rotate:
+	@test "$(APPROVAL)" = "$(REPOSITORY_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/forgejo-repository' >&2; exit 2; }
+	$(PYTHON) "$(REPOSITORY_REGISTER_SCRIPT)" \
+		--rotate \
+		--bootstrap-sops "$(REPOSITORY_ROOT)/.local/sudo/delivery/bootstrap.sops.json" \
+		--age-key "$(REPOSITORY_ROOT)/.local/sudo/delivery/age-key.txt" \
+		--repository-sops "$(REPOSITORY_HANDOFF)" \
+		--inventory "$(INIT_DELIVERY_INVENTORY)" \
+		--inventory "$(INIT_CONNECTION_INVENTORY)" \
+		--approval "$(APPROVAL)"
+
+# Read-only repository verification uses the bot credential handoff.
+repository-verify: delivery-handoff-validate
+	$(PYTHON) "$(REPOSITORY_REGISTER_SCRIPT)" \
+		--verify-only \
+		--repository-sops "$(REPOSITORY_HANDOFF)" \
+		--age-key "$(REPOSITORY_ROOT)/.local/sudo/delivery/age-key.txt" \
+		--inventory "$(INIT_DELIVERY_INVENTORY)" \
+		--inventory "$(INIT_CONNECTION_INVENTORY)"
