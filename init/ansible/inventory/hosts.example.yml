@@ -36,6 +36,10 @@ all:
       children:
         gcp_shared_nodes: {}
         gcp_k3s_servers: {}
+    gcp_debian_guests:
+      children:
+        delivery_nodes: {}
+        gcp_k3s_servers: {}
     shell_nodes:
       children:
         gcp_shared_nodes:
@@ -46,6 +50,7 @@ all:
               shell_role: identity
               shell_cluster: shared
               shell_transport: gcp_iap
+              shell_operating_system: almalinux-9
               gcp_zone: europe-west4-a
             delivery-01:
               ansible_host: 10.77.0.211
@@ -53,6 +58,7 @@ all:
               shell_role: delivery
               shell_cluster: shared
               shell_transport: gcp_iap
+              shell_operating_system: debian-13
               gcp_zone: europe-west4-b
         gcp_k3s_servers:
           hosts:
@@ -60,16 +66,19 @@ all:
               ansible_host: 10.77.0.201
               shell_expected_address: 10.77.0.201
               shell_transport: gcp_iap
+              shell_operating_system: debian-13
               gcp_zone: europe-west4-a
             gcp-k3s-02:
               ansible_host: 10.77.0.202
               shell_expected_address: 10.77.0.202
               shell_transport: gcp_iap
+              shell_operating_system: debian-13
               gcp_zone: europe-west4-b
             gcp-k3s-03:
               ansible_host: 10.77.0.203
               shell_expected_address: 10.77.0.203
               shell_transport: gcp_iap
+              shell_operating_system: debian-13
               gcp_zone: europe-west4-c
         proxmox_k3s_servers:
           hosts:

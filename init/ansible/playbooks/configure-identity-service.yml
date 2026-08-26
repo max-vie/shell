@@ -1,21 +1,20 @@
 ---
-# Import the identity execution boundary without selecting the operating
-# system, secret store, domain, realm, or artifact supply.
+# Preview the selected AlmaLinux 9, FreeIPA domain, and DNS boundary without
+# reading private credentials or changing the identity host.
 - name: Preview the deferred identity service
   hosts: identity_nodes
   gather_facts: false
   any_errors_fatal: true
-  vars:
-    shell_access_validator: >-
-      {{ playbook_dir }}/../../../sudo/scripts/validate_access_contracts.py
-    shell_identity_profile_path: >-
-      {{ playbook_dir }}/../../../sudo/access/freeipa-host-profile.json
+  vars_files:
+    - ../vars/contracts.yml
   pre_tasks:
     - name: Validate all public SUDO access contracts
       ansible.builtin.command:
         argv:
           - "{{ ansible_playbook_python }}"
-          - "{{ shell_access_validator }}"
+          - >-
+            {{ playbook_dir
+            }}/../../../sudo/scripts/validate_access_contracts.py
       check_mode: false
       changed_when: false
       become: false
@@ -25,7 +24,8 @@
 
     - name: Load the public identity host profile
       ansible.builtin.include_vars:
-        file: "{{ shell_identity_profile_path }}"
+        file: >-
+          {{ playbook_dir }}/../../../sudo/access/freeipa-host-profile.json
         name: shell_identity_profile
       become: false
       delegate_to: localhost
@@ -38,28 +38,49 @@
           - shell_identity_profile.policy_owner == 'sudo'
           - "'init' in shell_identity_profile.consumer_owners"
           - shell_identity_profile.proof_status == 'source-only'
-          - shell_identity_profile.inventory_group == 'identity_nodes'
+          - >-
+            shell_identity_profile.inventory_group
+            == shell_identity_inventory_group
           - shell_identity_profile.host.name == 'identity-01'
+          - shell_identity_profile.host.fqdn == 'identity-01.shell.internal'
           - shell_identity_profile.host.ip_address == '10.77.0.210'
+          - shell_identity_profile.host.operating_system == 'almalinux-9'
+          - shell_identity_profile.identity.domain == 'shell.internal'
+          - shell_identity_profile.identity.realm == 'SHELL.INTERNAL'
+          - shell_identity_profile.identity.dns_forwarders | length == 2
+          - >-
+            shell_identity_profile.required_contracts.operating_system.status
+            == 'source-defined'
+          - >-
+            shell_identity_profile.required_contracts.operating_system.value
+            == 'almalinux-9'
+          - >-
+            shell_identity_profile.required_contracts.operating_system.decision
+            == 'man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md'
+          - >-
+            shell_identity_profile.required_contracts.identity_configuration.status
+            == 'source-defined'
+          - >-
+            shell_identity_profile.secret_contract.private_values_tracked
+            == false
           - shell_identity_profile.execution.owner == 'init'
           - shell_identity_profile.execution.mode == 'contract-preview'
           - >-
             shell_identity_profile.execution.status ==
             'blocked-by-required-contracts'
           - >-
-            shell_identity_profile.required_contracts.operating_system.status
-            == 'not-defined'
-          - >-
             shell_identity_profile.required_contracts.artifact_supply.status
             == 'not-defined'
           - >-
-            shell_identity_profile.required_contracts.identity_configuration.status
-            == 'not-defined'
-          - >-
             shell_identity_profile.required_contracts.identity_credentials.status
+            == 'source-defined'
+          - >-
+            shell_identity_profile.required_contracts.identity_credentials.handoff_status
             == 'not-defined'
-          - groups['identity_nodes'] | length == 1
-          - shell_identity_profile.host.name in groups['identity_nodes']
+          - groups[shell_identity_inventory_group] | length == 1
+          - >-
+            shell_identity_profile.host.name in
+            groups[shell_identity_inventory_group]
           - >-
             hostvars[shell_identity_profile.host.name].ansible_host ==
             shell_identity_profile.host.ip_address
@@ -77,21 +98,21 @@
           - inventory_hostname == 'identity-01'
           - ansible_host == '10.77.0.210'
           - shell_expected_address == '10.77.0.210'
-          - shell_role | default('') == 'identity'
-          - shell_cluster | default('') == 'shared'
-          - shell_transport | default('') == 'gcp_iap'
+          - shell_role | default('') == shell_identity_role
+          - shell_cluster | default('') == shell_identity_cluster
+          - shell_transport | default('') == shell_identity_transport
           - (ansible_user | default('')) is string
           - (ansible_user | default('')) | length > 0
           - (ansible_user | default('')) != 'root'
         fail_msg: The selected host does not match the identity contract.
       tags: [always]
 
-    - name: Refuse identity mutation while required contracts are undefined
+    - name: Refuse identity mutation while runtime handoffs are incomplete
       ansible.builtin.fail:
         msg: >-
-          Identity mutation is not authorized by the current source-only
-          contracts. Complete the required MAN, TAR, SUDO, and INIT contracts
-          before extending this playbook.
+          Identity mutation is not authorized by the source-only contracts.
+          Complete the private credential and AlmaLinux image and artifact
+          handoffs before extending this playbook.
       when: not ansible_check_mode
       tags: [always]
 
@@ -99,9 +120,9 @@
     - name: Describe the deferred identity configuration
       ansible.builtin.debug:
         msg: >-
-          Identity configuration remains blocked until MAN decides the host
-          operating system, TAR defines artifact supply, and SUDO defines the
-          domain, realm, credentials, and secret-store handoff.
+          Identity configuration remains blocked until INIT supplies a
+          reviewed AlmaLinux 9 image, TAR defines the identity artifact
+          supply, and SUDO provides the private credential handoff.
       when: ansible_check_mode
 
     - name: Stop after the identity contract preview

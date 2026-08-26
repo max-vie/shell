@@ -33,6 +33,10 @@ EXPECTED_SHARED_ADDRESSES = {
     "identity-01": "10.77.0.210",
     "delivery-01": "10.77.0.211",
 }
+EXPECTED_SHARED_OPERATING_SYSTEMS = {
+    "identity-01": "almalinux-9",
+    "delivery-01": "debian-13",
+}
 EXPECTED_GCP_K3S = {
     "gcp-k3s-01",
     "gcp-k3s-02",
@@ -227,17 +231,28 @@ def normalize_gcp_nodes(
         # These values are derived from the owning root. The current OpenTofu
         # outputs carry infrastructure facts, not Ansible policy labels.
         role = expected[name] if isinstance(expected, dict) else "k3s"
-        normalized.append(
-            {
-                "name": name,
-                "address": address,
-                "role": role,
-                "cluster": cluster,
-                "transport": "gcp_iap",
-                "gcp_zone": zone,
-                "project_id": project_id,
-            }
-        )
+        normalized_record = {
+            "name": name,
+            "address": address,
+            "role": role,
+            "cluster": cluster,
+            "transport": "gcp_iap",
+            "gcp_zone": zone,
+            "project_id": project_id,
+        }
+        if cluster == "shared":
+            operating_system = require_string(
+                record.get("operating_system"), "operating_system", name
+            )
+            if operating_system != EXPECTED_SHARED_OPERATING_SYSTEMS[name]:
+                raise InventoryError(
+                    f"{name} operating system must be "
+                    f"{EXPECTED_SHARED_OPERATING_SYSTEMS[name]}: {operating_system}"
+                )
+            normalized_record["operating_system"] = operating_system
+        else:
+            normalized_record["operating_system"] = "debian-13"
+        normalized.append(normalized_record)
     return normalized
 
 
@@ -349,6 +364,7 @@ def inventory(
         if node["transport"] == "gcp_iap":
             hostvars["gcp_zone"] = node["gcp_zone"]
             hostvars["gcp_project_id"] = gcp_project_id
+            hostvars["shell_operating_system"] = node["operating_system"]
             group = (
                 "gcp_shared_nodes" if node["cluster"] == "shared" else "gcp_k3s_servers"
             )
@@ -372,12 +388,17 @@ def inventory(
     return {
         "all": {
             "children": {
-                # Direct GCP guests share the IAP transport and Debian baseline;
-                # keep the shared and K3s subgroups available for narrower
-                # playbooks.
+                # Direct GCP guests share the IAP transport. The Debian
+                # baseline excludes the AlmaLinux identity host.
                 "gcp_guests": {
                     "children": {
                         "gcp_shared_nodes": {},
+                        "gcp_k3s_servers": {},
+                    }
+                },
+                "gcp_debian_guests": {
+                    "children": {
+                        "delivery_nodes": {},
                         "gcp_k3s_servers": {},
                     }
                 },

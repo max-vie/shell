@@ -1,21 +1,20 @@
 ---
-# Import the delivery execution boundary while MAKE-owned workloads,
-# endpoints, and SUDO-owned credentials remain undefined.
+# Preview the public delivery contracts without reading private credentials,
+# staging artifacts, or changing the delivery host.
 - name: Preview the deferred delivery host
   hosts: delivery_nodes
   gather_facts: false
   any_errors_fatal: true
-  vars:
-    shell_access_validator: >-
-      {{ playbook_dir }}/../../../sudo/scripts/validate_access_contracts.py
-    shell_delivery_profile_path: >-
-      {{ playbook_dir }}/../../../sudo/access/delivery-host-profile.json
+  vars_files:
+    - ../vars/contracts.yml
   pre_tasks:
     - name: Validate all public SUDO access contracts
       ansible.builtin.command:
         argv:
           - "{{ ansible_playbook_python }}"
-          - "{{ shell_access_validator }}"
+          - >-
+            {{ playbook_dir
+            }}/../../../sudo/scripts/validate_access_contracts.py
       check_mode: false
       changed_when: false
       become: false
@@ -25,8 +24,67 @@
 
     - name: Load the public delivery host profile
       ansible.builtin.include_vars:
-        file: "{{ shell_delivery_profile_path }}"
+        file: >-
+          {{ playbook_dir }}/../../../sudo/access/delivery-host-profile.json
         name: shell_delivery_profile
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Load the public delivery credential contract
+      ansible.builtin.include_vars:
+        file: >-
+          {{ playbook_dir }}/../../../sudo/secrets/delivery-input-contract.json
+        name: shell_delivery_input_contract
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Load the public delivery artifact supply contract
+      ansible.builtin.include_vars:
+        file: >-
+          {{ playbook_dir }}/../../../tar/manifests/delivery-supply.json
+        name: shell_delivery_supply
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Load the public service-node handoff requirements
+      ansible.builtin.include_vars:
+        file: >-
+          {{ playbook_dir
+          }}/../../../make/contracts/service-node-handoff-requirements.json
+        name: shell_service_handoff
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Validate the public TAR delivery supply
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - >-
+            {{ playbook_dir }}/../../../tar/scripts/validate_delivery_supply.py
+      check_mode: false
+      changed_when: false
+      become: false
+      delegate_to: localhost
+      run_once: true
+      tags: [always]
+
+    - name: Validate the public MAKE service-node handoff
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - >-
+            {{ playbook_dir
+            }}/../../../make/scripts/validate_service_node_handoff.py
+      check_mode: false
+      changed_when: false
       become: false
       delegate_to: localhost
       run_once: true
@@ -39,10 +97,50 @@
           - "'init' in shell_delivery_profile.consumer_owners"
           - "'make' in shell_delivery_profile.consumer_owners"
           - shell_delivery_profile.proof_status == 'source-only'
-          - shell_delivery_profile.inventory_group == 'delivery_nodes'
+          - >-
+            shell_delivery_profile.inventory_group
+            == shell_delivery_inventory_group
           - shell_delivery_profile.host.name == 'delivery-01'
+          - shell_delivery_profile.host.fqdn == 'delivery-01.shell.internal'
           - shell_delivery_profile.host.ip_address == '10.77.0.211'
           - shell_delivery_profile.host.operating_system == 'debian-13'
+          - shell_delivery_profile.trust.domain == 'shell.internal'
+          - shell_delivery_profile.trust.dns_server == '10.77.0.210'
+          - shell_delivery_profile.service.owner == 'make'
+          - shell_delivery_profile.service.fqdn == 'forgejo.shell.internal'
+          - shell_delivery_profile.service.port == 443
+          - shell_delivery_profile.service.transport == 'https'
+          - shell_delivery_input_contract.proof_status == 'source-only'
+          - >-
+            shell_delivery_input_contract.repository_policy.contract_tracked
+            == true
+          - >-
+            shell_delivery_input_contract.repository_policy.private_values_tracked
+            == false
+          - shell_delivery_supply.proof_status == 'source-reference-only'
+          - shell_delivery_supply.runtime_image_platform == 'linux/amd64'
+          - shell_service_handoff.proof_status == 'source-only'
+          - shell_service_handoff.producer_owner == 'init'
+          - >-
+            shell_service_handoff.required_identity.service_node_id
+            == 'delivery-01'
+          - shell_service_handoff.required_identity.os.name == 'debian'
+          - shell_service_handoff.required_identity.os.major_version == 13
+          - >-
+            shell_service_handoff.source_contracts.artifact_supply
+            == 'tar/manifests/delivery-supply.json'
+          - >-
+            shell_service_handoff.source_contracts.delivery_profile
+            == 'sudo/access/delivery-host-profile.json'
+          - >-
+            shell_service_handoff.source_contracts.delivery_inputs
+            == 'sudo/secrets/delivery-input-contract.json'
+          - >-
+            shell_service_handoff.required_service.fqdn
+            == shell_delivery_profile.service.fqdn
+          - >-
+            shell_service_handoff.required_artifacts.images
+            == shell_delivery_supply.required_images
           - shell_delivery_profile.execution.owner == 'init'
           - shell_delivery_profile.execution.mode == 'contract-preview'
           - >-
@@ -50,21 +148,38 @@
             'blocked-by-required-contracts'
           - >-
             shell_delivery_profile.required_contracts.workload_configuration.status
-            == 'not-defined'
+            == 'source-defined'
           - >-
             shell_delivery_profile.required_contracts.service_endpoints.status
-            == 'not-defined'
+            == 'source-defined'
           - >-
             shell_delivery_profile.required_contracts.delivery_credentials.status
+            == 'source-defined'
+          - >-
+            shell_delivery_profile.required_contracts.artifact_supply.status
+            == 'source-defined'
+          - >-
+            shell_delivery_profile.required_contracts.workload_configuration.handoff_status
             == 'not-defined'
-          - groups['delivery_nodes'] | length == 1
-          - shell_delivery_profile.host.name in groups['delivery_nodes']
+          - >-
+            shell_delivery_profile.required_contracts.service_endpoints.handoff_status
+            == 'not-defined'
+          - >-
+            shell_delivery_profile.required_contracts.delivery_credentials.handoff_status
+            == 'not-defined'
+          - >-
+            shell_delivery_profile.required_contracts.artifact_supply.handoff_status
+            == 'not-staged'
+          - groups[shell_delivery_inventory_group] | length == 1
+          - >-
+            shell_delivery_profile.host.name in
+            groups[shell_delivery_inventory_group]
           - >-
             hostvars[shell_delivery_profile.host.name].ansible_host ==
             shell_delivery_profile.host.ip_address
         fail_msg: >-
           The SUDO delivery profile, INIT inventory, or deferred contract
-          boundary has changed.
+          boundary has changed, or an owner validator rejected its contract.
       become: false
       delegate_to: localhost
       run_once: true
@@ -76,21 +191,21 @@
           - inventory_hostname == 'delivery-01'
           - ansible_host == '10.77.0.211'
           - shell_expected_address == '10.77.0.211'
-          - shell_role | default('') == 'delivery'
-          - shell_cluster | default('') == 'shared'
-          - shell_transport | default('') == 'gcp_iap'
+          - shell_role | default('') == shell_delivery_role
+          - shell_cluster | default('') == shell_delivery_cluster
+          - shell_transport | default('') == shell_delivery_transport
           - (ansible_user | default('')) is string
           - (ansible_user | default('')) | length > 0
           - (ansible_user | default('')) != 'root'
         fail_msg: The selected host does not match the delivery contract.
       tags: [always]
 
-    - name: Refuse delivery mutation while required contracts are undefined
+    - name: Refuse delivery mutation while runtime handoffs are incomplete
       ansible.builtin.fail:
         msg: >-
-          Delivery mutation is not authorized by the current source-only
-          contracts. Complete the required SUDO and MAKE contracts before
-          extending this playbook.
+          Delivery mutation is not authorized by the source-only contracts.
+          Complete the private credential, artifact staging, and workload
+          handoffs before extending this playbook.
       when: not ansible_check_mode
       tags: [always]
 
@@ -98,9 +213,9 @@
     - name: Describe the deferred delivery configuration
       ansible.builtin.debug:
         msg: >-
-          Delivery configuration remains blocked until MAKE defines workload
-          configuration and service endpoints and SUDO defines the delivery
-          credential handoff.
+          Delivery configuration remains blocked until TAR stages the image
+          supply, SUDO provides private credential values, and MAKE provides
+          the workload configuration and service-endpoint handoffs.
       when: ansible_check_mode
 
     - name: Stop after the delivery contract preview

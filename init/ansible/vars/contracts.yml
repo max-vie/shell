@@ -1,0 +1,12 @@
+---
+# Inventory selectors shared by the source-only identity and delivery
+# previews. Contract and executable paths stay literal in the playbooks.
+shell_identity_inventory_group: identity_nodes
+shell_identity_role: identity
+shell_identity_cluster: shared
+shell_identity_transport: gcp_iap
+
+shell_delivery_inventory_group: delivery_nodes
+shell_delivery_role: delivery
+shell_delivery_cluster: shared
+shell_delivery_transport: gcp_iap

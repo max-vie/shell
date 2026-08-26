@@ -2,7 +2,7 @@
 # Read-only proof for the direct GCP Debian guest baseline. It verifies the
 # image-provided OS Login environment and the Ansible-managed common baseline.
 - name: Verify direct GCP Debian guest baseline
-  hosts: gcp_guests
+  hosts: gcp_debian_guests
   gather_facts: false
   serial: 1
   any_errors_fatal: true
@@ -24,6 +24,7 @@
           - ansible_facts.hostname == inventory_hostname
           - ansible_facts.distribution == "Debian"
           - ansible_facts.distribution_major_version == "13"
+          - (shell_operating_system | default('')) == "debian-13"
           - >-
             (ansible_host | default('')) ==
             (shell_expected_address | default(''))

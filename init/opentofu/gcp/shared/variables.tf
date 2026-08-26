@@ -76,6 +76,7 @@ variable "shared_nodes" {
     zone              = string
     address           = string
     machine_type      = string
+    operating_system  = string
     source_image      = string
     boot_disk_size_gb = number
     data_disk_size_gb = number
@@ -94,6 +95,19 @@ variable "shared_nodes" {
   }
 
   validation {
+    condition     = try(var.shared_nodes["identity-01"].operating_system, "") == "almalinux-9" && try(var.shared_nodes["delivery-01"].operating_system, "") == "debian-13"
+    error_message = "identity-01 must use AlmaLinux 9 and delivery-01 must use Debian 13."
+  }
+
+  validation {
+    condition = (
+      can(regex("^https://www[.]googleapis[.]com/compute/v1/projects/almalinux-cloud/global/images/almalinux-9([-a-z0-9]*[a-z0-9])?$", var.shared_nodes["identity-01"].source_image)) &&
+      can(regex("^https://www[.]googleapis[.]com/compute/v1/projects/debian-cloud/global/images/debian-13([-a-z0-9]*[a-z0-9])?$", var.shared_nodes["delivery-01"].source_image))
+    )
+    error_message = "Shared-node images must be pinned AlmaLinux 9 and Debian 13 images from their official GCP image projects."
+  }
+
+  validation {
     condition = alltrue([
       for node in values(var.shared_nodes) : can(regex("^[0-9]{1,3}([.][0-9]{1,3}){3}$", node.address)) && can(cidrhost("${node.address}/32", 0))
     ])
@@ -105,6 +119,7 @@ variable "shared_nodes" {
       for node in values(var.shared_nodes) : (
         can(regex("^[a-z][a-z0-9-]+[0-9]-[a-z]$", node.zone)) &&
         length(trimspace(node.machine_type)) > 0 &&
+        length(trimspace(node.operating_system)) > 0 &&
         can(regex("^https://www[.]googleapis[.]com/compute/v1/projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/global/images/[a-z]([-a-z0-9]*[a-z0-9])?$", node.source_image)) &&
         node.boot_disk_size_gb >= 10 && node.boot_disk_size_gb == floor(node.boot_disk_size_gb) &&
         node.data_disk_size_gb > 0 && node.data_disk_size_gb == floor(node.data_disk_size_gb)

@@ -83,12 +83,46 @@ resource "google_compute_firewall" "shared_internal" {
 
   allow {
     protocol = "tcp"
-    ports    = ["22", "53", "80", "443", "389", "636"]
+    ports    = ["22"]
+  }
+
+  # Establish service-specific rules before narrowing an existing shared rule.
+  depends_on = [
+    google_compute_firewall.identity_internal,
+    google_compute_firewall.delivery_internal,
+  ]
+}
+
+resource "google_compute_firewall" "identity_internal" {
+  project       = var.project_id
+  name          = "${var.network_name}-allow-identity-internal"
+  network       = google_compute_network.shared.name
+  direction     = "INGRESS"
+  source_ranges = [var.subnet_cidr]
+  target_tags   = ["shell-identity"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["53", "80", "88", "389", "443", "464", "636"]
   }
 
   allow {
     protocol = "udp"
-    ports    = ["53"]
+    ports    = ["53", "88", "464"]
+  }
+}
+
+resource "google_compute_firewall" "delivery_internal" {
+  project       = var.project_id
+  name          = "${var.network_name}-allow-delivery-internal"
+  network       = google_compute_network.shared.name
+  direction     = "INGRESS"
+  source_ranges = [var.subnet_cidr]
+  target_tags   = ["shell-delivery"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["443"]
   }
 }
 
@@ -96,17 +130,20 @@ module "shared_nodes" {
   for_each = var.shared_nodes
   source   = "../../modules/gcp-private-node"
 
-  project_id          = var.project_id
-  region              = var.region
-  subnetwork_id       = google_compute_subnetwork.shared.id
-  node_name           = each.key
-  zone                = each.value.zone
-  internal_address    = each.value.address
-  machine_type        = each.value.machine_type
-  source_image        = each.value.source_image
-  boot_disk_size_gb   = each.value.boot_disk_size_gb
-  data_disk_size_gb   = each.value.data_disk_size_gb
-  tags                = ["shell-shared"]
+  project_id        = var.project_id
+  region            = var.region
+  subnetwork_id     = google_compute_subnetwork.shared.id
+  node_name         = each.key
+  zone              = each.value.zone
+  internal_address  = each.value.address
+  machine_type      = each.value.machine_type
+  source_image      = each.value.source_image
+  boot_disk_size_gb = each.value.boot_disk_size_gb
+  data_disk_size_gb = each.value.data_disk_size_gb
+  tags = concat(
+    ["shell-shared"],
+    each.key == "identity-01" ? ["shell-identity"] : ["shell-delivery"],
+  )
   deletion_protection = var.deletion_protection
   data_device_name    = "shell-${each.key}-data"
 

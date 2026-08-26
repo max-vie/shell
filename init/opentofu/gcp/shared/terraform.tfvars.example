@@ -5,9 +5,10 @@ shared_nodes = {
     zone              = "europe-west4-a"
     address           = "10.77.0.210"
     machine_type      = "e2-standard-2"
-    # Pin a Google-provided Debian 13 image (or reviewed equivalent) that
-    # includes the GCP guest environment and OS Login support.
-    source_image      = "replace-with-reviewed-debian-13-image-self-link"
+    operating_system  = "almalinux-9"
+    # Pin an almalinux-cloud AlmaLinux 9 image that includes the GCP guest
+    # environment and OS Login support.
+    source_image      = "replace-with-reviewed-almalinux-9-image-self-link"
     boot_disk_size_gb = 32
     data_disk_size_gb = 50
   }
@@ -16,6 +17,8 @@ shared_nodes = {
     zone              = "europe-west4-b"
     address           = "10.77.0.211"
     machine_type      = "e2-standard-2"
+    operating_system  = "debian-13"
+    # Pin a debian-cloud Debian 13 image with the GCP guest environment.
     source_image      = "replace-with-reviewed-debian-13-image-self-link"
     boot_disk_size_gb = 32
     data_disk_size_gb = 100

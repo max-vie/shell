@@ -40,12 +40,14 @@ class TestRenderNodeInventory(unittest.TestCase):
                 "name": "identity-01",
                 "zone": "europe-west4-a",
                 "internal_ip": "10.77.0.210",
+                "operating_system": "almalinux-9",
                 "project_id": "shell-platform",
             },
             "delivery-01": {
                 "name": "delivery-01",
                 "zone": "europe-west4-b",
                 "internal_ip": "10.77.0.211",
+                "operating_system": "debian-13",
                 "project_id": "shell-platform",
             },
         }
@@ -187,7 +189,17 @@ class TestRenderNodeInventory(unittest.TestCase):
             list(value["all"]["children"]["gcp_guests"]["children"]),
             ["gcp_shared_nodes", "gcp_k3s_servers"],
         )
+        self.assertEqual(
+            list(value["all"]["children"]["gcp_debian_guests"]["children"]),
+            ["delivery_nodes", "gcp_k3s_servers"],
+        )
         self.assertEqual(hostvars["identity-01"]["shell_role"], "identity")
+        self.assertEqual(
+            hostvars["identity-01"]["shell_operating_system"], "almalinux-9"
+        )
+        self.assertEqual(
+            hostvars["delivery-01"]["shell_operating_system"], "debian-13"
+        )
         self.assertEqual(hostvars["gcp-k3s-01"]["shell_transport"], "gcp_iap")
         self.assertEqual(hostvars["gcp-k3s-01"]["gcp_project_id"], "shell-platform")
         self.assertEqual(hostvars["proxmox-k3s-01"]["proxmox_vm_id"], 320)
@@ -252,6 +264,17 @@ class TestRenderNodeInventory(unittest.TestCase):
         gcp_k3s["gcp-k3s-01"]["internal_ip"] = "10.77.0.204"
         with self.assertRaisesRegex(renderer.InventoryError, "contract address"):
             self.build(gcp_k3s=gcp_k3s)
+
+    def test_shared_operating_system_drift_is_rejected(self) -> None:
+        shared = self.shared_nodes()
+        shared["identity-01"]["operating_system"] = "debian-13"
+        with self.assertRaisesRegex(renderer.InventoryError, "operating system"):
+            self.build(shared=shared)
+
+        shared = self.shared_nodes()
+        del shared["delivery-01"]["operating_system"]
+        with self.assertRaisesRegex(renderer.InventoryError, "operating_system"):
+            self.build(shared=shared)
 
     def test_invalid_gcp_zone_is_rejected(self) -> None:
         gcp_k3s = self.gcp_k3s_nodes()
@@ -425,11 +448,10 @@ class TestRenderNodeInventory(unittest.TestCase):
             self.assertEqual(
                 {
                     host
-                    for child in inventory["gcp_guests"]["children"]
+                    for child in inventory["gcp_debian_guests"]["children"]
                     for host in inventory[child]["hosts"]
                 },
                 {
-                    "identity-01",
                     "delivery-01",
                     "gcp-k3s-01",
                     "gcp-k3s-02",
