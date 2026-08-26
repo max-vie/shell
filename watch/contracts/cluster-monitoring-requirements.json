@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "cluster-monitoring-requirements",
+  "description": "WATCH source requirements for the first GCP K3s metrics slice.",
+  "policy_owner": "watch",
+  "producer_owner": "init",
+  "consumer_owners": ["make", "watch"],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "cluster": {
+    "name": "gcp",
+    "inventory_group": "gcp_k3s_servers",
+    "control_plane": "k3s",
+    "nodes": ["gcp-k3s-01", "gcp-k3s-02", "gcp-k3s-03"],
+    "first_server": "gcp-k3s-01",
+    "first_server_address": "10.77.0.201",
+    "first_server_zone": "europe-west4-a",
+    "project_id_source": "INIT private inventory gcp_project_id",
+    "api_endpoint_source": "INIT private inventory shell_inventory_k3s_api_endpoint"
+  },
+  "supply": {
+    "contract": "tar/manifests/watch-supply.json",
+    "chart": "kube-prometheus-stack",
+    "chart_version": "88.5.2"
+  },
+  "required_guest_tools": ["k3s", "helm"],
+  "deployment": {
+    "owner": "make",
+    "values": "make/monitoring/values.yaml",
+    "release": "shell-watch",
+    "namespace": "monitoring",
+    "exclusive_namespace": true,
+    "service_selectors": {
+      "prometheus": "app=kube-prometheus-stack-prometheus,release=shell-watch",
+      "alertmanager": "app=kube-prometheus-stack-alertmanager,release=shell-watch"
+    },
+    "metrics_proof": ["node-exporter scrape target", "Watchdog alert"]
+  },
+  "excluded_fields": ["node_addresses", "pod_cidr", "service_cidr", "credentials"]
+}
