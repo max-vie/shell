@@ -26,6 +26,10 @@ RUNNER_HANDOFF := $(REPOSITORY_ROOT)/.local/sudo/delivery/forgejo-runner.sops.js
 REPOSITORY_REGISTER_SCRIPT := $(MAKE_ROOT)/scripts/register_forgejo_repository.py
 REPOSITORY_HANDOFF := $(REPOSITORY_ROOT)/.local/sudo/delivery/forgejo-repository.sops.json
 REPOSITORY_APPROVAL := environment-gcp/make/forgejo-repository
+MONITORING_DEPLOY_SCRIPT := $(MAKE_ROOT)/scripts/deploy_monitoring.py
+MONITORING_APPROVAL := environment-gcp/make/monitoring
+MONITORING_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
+MONITORING_CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
 
 TRUST_VALIDATOR := $(MAKE_ROOT)/scripts/validate_cluster_trust.py
 INTERMEDIATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_cluster_intermediate.py
@@ -33,9 +37,9 @@ CERTIFICATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_consumer_certificate.py
 SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_kubernetes_supply.py
 TRUST_VALUES := $(MAKE_ROOT)/cert-manager/values.yaml
 
-.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify
+.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply
 
-check: test trust-preview repository-check
+check: test trust-preview repository-check monitoring-check
 
 test:
 	$(PYTHON) -m unittest discover -s $(MAKE_ROOT)/tests -p 'test_*.py'
@@ -162,3 +166,17 @@ repository-verify: delivery-handoff-validate
 		--age-key "$(REPOSITORY_ROOT)/.local/sudo/delivery/age-key.txt" \
 		--inventory "$(INIT_DELIVERY_INVENTORY)" \
 		--inventory "$(INIT_CONNECTION_INVENTORY)"
+
+# Monitoring source validation is offline and does not inspect private state.
+monitoring-check:
+	$(PYTHON) "$(MONITORING_DEPLOY_SCRIPT)" --check-only
+
+monitoring-preview: monitoring-check
+
+# MAKE is the only lifecycle allowed to mutate Kubernetes workloads.
+monitoring-apply:
+	@test "$(APPROVAL)" = "$(MONITORING_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/monitoring' >&2; exit 2; }
+	$(PYTHON) "$(MONITORING_DEPLOY_SCRIPT)" \
+		--inventory "$(MONITORING_INVENTORY)" \
+		--inventory "$(MONITORING_CONNECTION_INVENTORY)" \
+		--approval "$(APPROVAL)"
