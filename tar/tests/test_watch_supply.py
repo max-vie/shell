@@ -1,4 +1,4 @@
-"""Test TAR's WATCH metrics supply lock."""
+"""Test TAR's WATCH metrics and Grafana supply lock."""
 
 from __future__ import annotations
 
@@ -23,9 +23,14 @@ class TestWatchSupply(unittest.TestCase):
     def test_current_supply_validates(self) -> None:
         lock = validator.validate_public()
         self.assertEqual("watch-supply", lock["contract_id"])
+        self.assertEqual("2.0.0", lock["contract_version"])
         self.assertEqual("source-reference-only", lock["proof_status"])
         self.assertEqual("make", lock["execution_owner"])
         self.assertEqual("88.5.2", lock["charts"]["kube-prometheus-stack"]["version"])
+        self.assertEqual(
+            "sha256:3fd54ae1214669f8355f065ec9f6445d5279a3d77095ab048ca045685272429b",
+            lock["runtime_image_digests"]["docker.io/grafana/grafana:13.2.0"],
+        )
 
     def test_supply_has_unique_digest_pinned_images(self) -> None:
         lock = validator.validate_public()

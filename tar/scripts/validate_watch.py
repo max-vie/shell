@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the source-only TAR supply for WATCH metrics."""
+"""Validate the source-only TAR supply for WATCH metrics and Grafana."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ EXPECTED_IMAGE_DIGESTS = {
     "quay.io/prometheus-operator/prometheus-config-reloader:v0.93.1": "sha256:428f088fe6fe07ab138bda92113664b04848a1dc408e4d3680a60ecdb55d1a65",
     "quay.io/prometheus/node-exporter:v1.12.1-distroless": "sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106",
     "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0": "sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b",
+    "docker.io/grafana/grafana:13.2.0": "sha256:3fd54ae1214669f8355f065ec9f6445d5279a3d77095ab048ca045685272429b",
     "ghcr.io/jkroepke/kube-webhook-certgen:1.8.5": "sha256:d0e80b2f62fe43bb5e1b96adc692132fb4522e802f4cf673c09b1f94722b8cb6",
 }
 EXPECTED_IMAGES = list(EXPECTED_IMAGE_DIGESTS)
@@ -89,7 +90,7 @@ def validate_public(path: Path = LOCK_PATH) -> dict[str, Any]:
         "TAR WATCH supply lock shape changed",
     )
     require(lock["schema_version"] == "1.0", "TAR WATCH schema changed")
-    require(lock["contract_version"] == "1.0.0", "TAR WATCH version changed")
+    require(lock["contract_version"] == "2.0.0", "TAR WATCH version changed")
     require(lock["contract_id"] == "watch-supply", "TAR WATCH contract ID changed")
     require(lock["policy_owner"] == "tar", "TAR must own WATCH supply")
     require(lock["execution_owner"] == "make", "MAKE must consume WATCH supply")
