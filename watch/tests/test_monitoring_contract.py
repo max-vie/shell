@@ -1,4 +1,4 @@
-"""Test WATCH's source-only metrics contract."""
+"""Test WATCH's source-only metrics and logs contract."""
 
 from __future__ import annotations
 
@@ -24,11 +24,28 @@ class TestMonitoringContract(unittest.TestCase):
     def test_current_contract_validates(self) -> None:
         document = validator.validate_contract()
         self.assertEqual("cluster-monitoring-requirements", document["contract_id"])
+        self.assertEqual("2.0.0", document["contract_version"])
         self.assertEqual("environment-gcp", document["environment"])
         self.assertEqual("gcp-k3s-01", document["cluster"]["first_server"])
         self.assertEqual(["k3s", "helm"], document["required_guest_tools"])
         self.assertEqual("make", document["deployment"]["owner"])
         self.assertEqual(["make", "watch"], document["consumer_owners"])
+        self.assertEqual(
+            "tar/manifests/watch-logs-supply.json",
+            document["logs"]["supply"]["contract"],
+        )
+        self.assertEqual(
+            "fresh Alloy logs queryable within 300 seconds",
+            document["logs"]["logs_proof"][1],
+        )
+        self.assertEqual(
+            "compensating-rollback",
+            document["logs"]["failure_policy"],
+        )
+        self.assertEqual(
+            "Alloy to gateway to Loki only",
+            document["logs"]["access_boundary"]["network_policy"],
+        )
 
     def test_contract_rejects_cluster_drift(self) -> None:
         source = json.loads(
@@ -70,6 +87,20 @@ class TestMonitoringContract(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 validator.watch_supply.WatchSupplyError, "digest drift"
+            ):
+                validator.validate_contract()
+
+    def test_contract_requires_full_tar_logs_supply_validation(self) -> None:
+        with mock.patch.object(
+            validator.watch_logs_supply,
+            "validate_public",
+            side_effect=validator.watch_logs_supply.WatchLogsSupplyError(
+                "logs digest drift"
+            ),
+        ):
+            with self.assertRaisesRegex(
+                validator.watch_logs_supply.WatchLogsSupplyError,
+                "logs digest drift",
             ):
                 validator.validate_contract()
 

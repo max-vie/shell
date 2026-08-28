@@ -1,8 +1,8 @@
 {
   "schema_version": "1.0",
-  "contract_version": "1.0.0",
+  "contract_version": "2.0.0",
   "contract_id": "cluster-monitoring-requirements",
-  "description": "WATCH source requirements for the first GCP K3s metrics slice.",
+  "description": "WATCH source requirements for the first GCP K3s metrics and logs slices.",
   "policy_owner": "watch",
   "producer_owner": "init",
   "consumer_owners": ["make", "watch"],
@@ -30,12 +30,39 @@
     "values": "make/monitoring/values.yaml",
     "release": "shell-watch",
     "namespace": "monitoring",
-    "exclusive_namespace": true,
+    "exclusive_namespace": false,
+    "runtime_pod_selector": "release=shell-watch",
     "service_selectors": {
       "prometheus": "app=kube-prometheus-stack-prometheus,release=shell-watch",
       "alertmanager": "app=kube-prometheus-stack-alertmanager,release=shell-watch"
     },
     "metrics_proof": ["node-exporter scrape target", "Watchdog alert"]
+  },
+  "logs": {
+    "supply": {
+      "contract": "tar/manifests/watch-logs-supply.json",
+      "charts": ["loki", "alloy"]
+    },
+    "values": {
+      "loki": "make/monitoring/logs-values.yaml",
+      "alloy": "make/monitoring/alloy-values.yaml"
+    },
+    "releases": {
+      "loki": "shell-watch-loki",
+      "alloy": "shell-watch-alloy"
+    },
+    "failure_policy": "compensating-rollback",
+    "access_boundary": {
+      "loki_authentication": "disabled",
+      "network_policy": "Alloy to gateway to Loki only",
+      "network_policy_source": "init/ansible/vars/k3s.yml shell_k3s_disable_network_policy=false",
+      "alloy_service": false
+    },
+    "namespace": "monitoring",
+    "alloy_daemonset_selector": "app.kubernetes.io/instance=shell-watch-alloy",
+    "loki_service_selector": "app.kubernetes.io/name=loki,app.kubernetes.io/instance=shell-watch-loki,app.kubernetes.io/component=gateway",
+    "loki_service_port": 80,
+    "logs_proof": ["Alloy ready on every contract node", "fresh Alloy logs queryable within 300 seconds"]
   },
   "excluded_fields": ["node_addresses", "pod_cidr", "service_cidr", "credentials"]
 }

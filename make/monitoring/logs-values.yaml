@@ -1,0 +1,184 @@
+---
+# MAKE values for the maintained Grafana Loki chart.
+#
+# This first logs slice uses one monolithic Loki replica with short-lived
+# filesystem storage. Durable storage and recovery remain later slices.
+deploymentMode: Monolithic
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+
+defaults:
+  automountServiceAccountToken: false
+
+rbac:
+  namespaced: true
+
+sidecar:
+  rules:
+    enabled: false
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
+  storage:
+    type: filesystem
+  limits_config:
+    retention_period: 2h
+  compactor:
+    retention_enabled: true
+    compaction_interval: 10m
+  image:
+    registry: docker.io
+    repository: grafana/loki
+    tag: 3.7.6
+    digest: >-
+      sha256:83c76da7858a8f4f88117ac521864ac33896fdae7a352a1df4068556e7513f64
+
+singleBinary:
+  replicas: 1
+  sidecar: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  persistence:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+
+gateway:
+  replicas: 1
+  metrics:
+    enabled: false
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    timeoutSeconds: 2
+    failureThreshold: 3
+  image:
+    registry: docker.io
+    repository: nginxinc/nginx-unprivileged
+    tag: 1.31-alpine
+    digest: >-
+      sha256:f652dfb31ebafe499d61adcbbf6007d898b64cb11234bc6ff864fbbc3ca043b8
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  podDisruptionBudget:
+    enabled: false
+  service:
+    port: 80
+
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+ingester:
+  replicas: 0
+distributor:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+queryScheduler:
+  replicas: 0
+indexGateway:
+  replicas: 0
+ruler:
+  replicas: 0
+lokiCanary:
+  enabled: false
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+memcached:
+  enabled: false
+test:
+  enabled: false
+
+monitoring:
+  dashboards:
+    enabled: false
+  rules:
+    enabled: false
+
+extraObjects:
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: shell-watch-loki-allow-alloy-gateway
+      namespace: monitoring
+      labels:
+        shell.platform/owner: make
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: loki
+          app.kubernetes.io/instance: shell-watch-loki
+          app.kubernetes.io/component: gateway
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: alloy
+                  app.kubernetes.io/instance: shell-watch-alloy
+          ports:
+            - protocol: TCP
+              port: http
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: shell-watch-loki-allow-gateway
+      namespace: monitoring
+      labels:
+        shell.platform/owner: make
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: loki
+          app.kubernetes.io/instance: shell-watch-loki
+          app.kubernetes.io/component: single-binary
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: loki
+                  app.kubernetes.io/instance: shell-watch-loki
+                  app.kubernetes.io/component: gateway
+          ports:
+            - protocol: TCP
+              port: http-metrics
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: loki
+                  app.kubernetes.io/instance: shell-watch-loki
+                  app.kubernetes.io/component: single-binary

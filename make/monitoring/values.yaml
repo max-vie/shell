@@ -9,6 +9,9 @@ grafana:
 
 prometheus:
   prometheusSpec:
+    podMetadata:
+      labels:
+        release: shell-watch
     retention: 2h
     resources:
       requests:
@@ -20,6 +23,9 @@ prometheus:
 
 alertmanager:
   alertmanagerSpec:
+    podMetadata:
+      labels:
+        release: shell-watch
     resources:
       requests:
         cpu: 50m

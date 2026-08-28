@@ -1,0 +1,165 @@
+---
+# yamllint disable rule:line-length
+# MAKE values for the Grafana Alloy Kubernetes log collector.
+# Alloy reads Kubernetes pod logs from the host and sends them to Loki.
+crds:
+  create: false
+
+alloy:
+  configMap:
+    create: true
+    content: |
+      discovery.kubernetes "pods" {
+        role = "pod"
+
+        selectors {
+          role  = "pod"
+          field = "spec.nodeName=" + coalesce(sys.env("HOSTNAME"), constants.hostname)
+        }
+
+        namespaces {
+          own_namespace = true
+        }
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+          separator     = "/"
+          target_label  = "__path__"
+          replacement   = "/var/log/pods/*$1/*.log"
+        }
+      }
+
+      loki.process "pods" {
+        forward_to = [loki.write.default.receiver]
+        stage.cri { }
+      }
+
+      loki.source.file "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.process.pods.receiver]
+
+        file_match {
+          enabled = true
+        }
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://shell-watch-loki-gateway/loki/api/v1/push"
+        }
+        external_labels = { }
+      }
+  clustering:
+    enabled: false
+  enableReporting: false
+  storagePath: /var/lib/alloy
+  initialDelaySeconds: 20
+  timeoutSeconds: 2
+  livenessProbe:
+    tcpSocket:
+      port: http-metrics
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    timeoutSeconds: 2
+    failureThreshold: 3
+  mounts:
+    varlog: true
+    dockercontainers: false
+    extra:
+      - name: storage
+        mountPath: /var/lib/alloy
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  # K3s pod log files are root-owned; the host mount stays read-only.
+  securityContext:
+    runAsUser: 0
+    runAsGroup: 0
+    runAsNonRoot: false
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+    seccompProfile:
+      type: RuntimeDefault
+
+image:
+  registry: docker.io
+  repository: grafana/alloy
+  tag: v1.18.1
+  digest: sha256:754409730f1a4ed9781f8a2ea3b6a8c55750ee125a267ecf8fb449f9a25c109a
+  pullPolicy: IfNotPresent
+
+configReloader:
+  enabled: true
+  image:
+    registry: quay.io
+    repository: prometheus-operator/prometheus-config-reloader
+    tag: v0.91.0
+    digest: >-
+      sha256:7d9e4eea5f1139e602508871f422b0116c60e87c662f3dcd234d5ab60cd0d8c1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
+
+rbac:
+  create: true
+  namespaces: [monitoring]
+  rules:
+    - apiGroups: [""]
+      resources: [pods]
+      verbs: [get, list, watch]
+
+serviceAccount:
+  create: true
+  automountServiceAccountToken: true
+
+controller:
+  type: daemonset
+  minReadySeconds: 10
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  # Positions remain pod-local in this first short-lived logs slice.
+  volumes:
+    extra:
+      - name: storage
+        emptyDir: {}
+
+# INIT keeps K3s's embedded network-policy controller enabled. This ingress-only
+# policy isolates Alloy while leaving its Kubernetes API and Loki egress open.
+networkPolicy:
+  enabled: true
+  flavor: kubernetes
+  policyTypes: [Ingress]
+  ingress: []
+  egress: []
+
+service:
+  enabled: false
+# yamllint enable rule:line-length
