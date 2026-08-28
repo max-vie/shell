@@ -70,13 +70,14 @@ def validate_contract(
             "supply",
             "required_guest_tools",
             "deployment",
+            "grafana",
             "logs",
             "excluded_fields",
         },
         "WATCH monitoring contract shape changed",
     )
     require(document["schema_version"] == "1.0", "WATCH schema version changed")
-    require(document["contract_version"] == "2.0.0", "WATCH contract version changed")
+    require(document["contract_version"] == "3.0.0", "WATCH contract version changed")
     require(
         document["contract_id"] == "cluster-monitoring-requirements",
         "WATCH contract ID changed",
@@ -136,10 +137,40 @@ def validate_contract(
             "service_selectors": {
                 "prometheus": "app=kube-prometheus-stack-prometheus,release=shell-watch",
                 "alertmanager": "app=kube-prometheus-stack-alertmanager,release=shell-watch",
+                "grafana": "app.kubernetes.io/name=grafana,app.kubernetes.io/instance=shell-watch",
             },
             "metrics_proof": ["node-exporter scrape target", "Watchdog alert"],
+            "failure_policy": "compensating-rollback",
         },
         "WATCH deployment boundary changed",
+    )
+    require(
+        document["grafana"]
+        == {
+            "health_path": "/api/health",
+            "service_port": 80,
+            "datasources": {
+                "prometheus": {
+                    "type": "prometheus",
+                    "url": "http://shell-watch-kube-prometheu-prometheus.monitoring:9090/",
+                    "proof_path": "/api/v1/query?query=vector%281%29",
+                },
+                "loki": {
+                    "type": "loki",
+                    "url": "http://shell-watch-loki-gateway.monitoring.svc.cluster.local",
+                    "proof_path": "/loki/api/v1/query_range?query=%7Bnamespace%3D%22monitoring%22%7D&limit=1&direction=backward",
+                },
+            },
+            "dashboard_uid": "shell-watch-overview",
+            "dashboard_title": "SHELL Watch Overview",
+            "dashboard_datasources": ["prometheus", "loki"],
+            "access_boundary": {
+                "authentication": "anonymous Viewer",
+                "network_policy": "deny pod ingress",
+                "operator_access": "node-side kubectl port-forward only",
+            },
+        },
+        "WATCH Grafana boundary changed",
     )
     require(
         document["excluded_fields"]
@@ -165,7 +196,7 @@ def validate_contract(
             "failure_policy": "compensating-rollback",
             "access_boundary": {
                 "loki_authentication": "disabled",
-                "network_policy": "Alloy to gateway to Loki only",
+                "network_policy": "Alloy and Grafana to gateway to Loki only",
                 "network_policy_source": "init/ansible/vars/k3s.yml shell_k3s_disable_network_policy=false",
                 "alloy_service": False,
             },

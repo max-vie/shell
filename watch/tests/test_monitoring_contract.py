@@ -24,7 +24,7 @@ class TestMonitoringContract(unittest.TestCase):
     def test_current_contract_validates(self) -> None:
         document = validator.validate_contract()
         self.assertEqual("cluster-monitoring-requirements", document["contract_id"])
-        self.assertEqual("2.0.0", document["contract_version"])
+        self.assertEqual("3.0.0", document["contract_version"])
         self.assertEqual("environment-gcp", document["environment"])
         self.assertEqual("gcp-k3s-01", document["cluster"]["first_server"])
         self.assertEqual(["k3s", "helm"], document["required_guest_tools"])
@@ -42,8 +42,22 @@ class TestMonitoringContract(unittest.TestCase):
             "compensating-rollback",
             document["logs"]["failure_policy"],
         )
+        self.assertEqual("/api/health", document["grafana"]["health_path"])
         self.assertEqual(
-            "Alloy to gateway to Loki only",
+            "deny pod ingress",
+            document["grafana"]["access_boundary"]["network_policy"],
+        )
+        self.assertEqual("shell-watch-overview", document["grafana"]["dashboard_uid"])
+        self.assertEqual(
+            "http://shell-watch-kube-prometheu-prometheus.monitoring:9090/",
+            document["grafana"]["datasources"]["prometheus"]["url"],
+        )
+        self.assertEqual(
+            "release=shell-watch",
+            document["deployment"]["runtime_pod_selector"],
+        )
+        self.assertEqual(
+            "Alloy and Grafana to gateway to Loki only",
             document["logs"]["access_boundary"]["network_policy"],
         )
 
@@ -76,6 +90,22 @@ class TestMonitoringContract(unittest.TestCase):
             path.write_text(json.dumps(altered), encoding="utf-8")
             with self.assertRaisesRegex(
                 validator.MonitoringContractError, "deployment boundary"
+            ):
+                validator.validate_contract(path)
+
+    def test_contract_rejects_grafana_dashboard_uid_drift(self) -> None:
+        source = json.loads(
+            (WATCH_ROOT / "contracts/cluster-monitoring-requirements.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        altered = copy.deepcopy(source)
+        altered["grafana"]["dashboard_uid"] = "other"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "contract.json"
+            path.write_text(json.dumps(altered), encoding="utf-8")
+            with self.assertRaisesRegex(
+                validator.MonitoringContractError, "Grafana boundary"
             ):
                 validator.validate_contract(path)
 
