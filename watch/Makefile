@@ -9,7 +9,7 @@ VERIFY_SCRIPT := $(WATCH_ROOT)/scripts/verify_monitoring.py
 INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
 CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
 
-.PHONY: check test verify
+.PHONY: check test check-logs verify verify-logs
 
 check: test
 
@@ -18,8 +18,18 @@ test:
 	$(PYTHON) $(SUPPLY_VALIDATOR)
 	$(PYTHON) -m unittest discover -s $(WATCH_ROOT)/tests -p 'test_*.py'
 
+check-logs:
+	$(PYTHON) $(CONTRACT_VALIDATOR)
+	$(PYTHON) $(REPOSITORY_ROOT)/tar/scripts/validate_watch_logs.py
+	$(PYTHON) -m unittest $(WATCH_ROOT)/tests/test_logs.py
+
 # Read-only live verification through the fixed first GCP K3s server.
 verify:
 	$(PYTHON) $(VERIFY_SCRIPT) \
+		--inventory "$(INVENTORY)" \
+		--inventory "$(CONNECTION_INVENTORY)"
+
+verify-logs:
+	$(PYTHON) $(WATCH_ROOT)/scripts/verify_logs.py \
 		--inventory "$(INVENTORY)" \
 		--inventory "$(CONNECTION_INVENTORY)"

@@ -81,7 +81,7 @@ def resolve_service(
         ),
         f"WATCH service does not expose port {service_port}",
     )
-    return name
+    return cast(str, name)
 
 
 def query_service(

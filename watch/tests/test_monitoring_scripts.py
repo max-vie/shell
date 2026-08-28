@@ -37,6 +37,8 @@ class TestMonitoringScripts(unittest.TestCase):
         makefile = (WATCH_ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertNotIn("apply:", makefile)
         self.assertNotIn("deploy_monitoring", makefile)
+        self.assertIn("check-logs:", makefile)
+        self.assertIn("verify-logs:", makefile)
         self.assertFalse((WATCH_SCRIPTS_ROOT / "deploy_monitoring.py").exists())
         self.assertFalse((WATCH_ROOT / "monitoring/values.yaml").exists())
 
