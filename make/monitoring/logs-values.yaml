@@ -152,6 +152,14 @@ extraObjects:
           ports:
             - protocol: TCP
               port: http
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: grafana
+                  app.kubernetes.io/instance: shell-watch
+          ports:
+            - protocol: TCP
+              port: http
   - apiVersion: networking.k8s.io/v1
     kind: NetworkPolicy
     metadata:

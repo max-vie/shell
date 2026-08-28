@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Deploy the pinned first WATCH metrics slice from MAKE."""
+"""Deploy the pinned WATCH metrics and Grafana slices from MAKE."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import re
 import shlex
 import sys
+import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import k3s_transport as transport
 
@@ -21,6 +24,7 @@ for script_root in (WATCH_SCRIPTS_ROOT, TAR_SCRIPTS_ROOT):
     if str(script_root) not in sys.path:
         sys.path.insert(0, str(script_root))
 import validate_monitoring_contract as contract  # noqa: E402
+import validate_monitoring_images as image_validator  # noqa: E402
 import validate_watch as supply  # noqa: E402
 
 
@@ -105,6 +109,7 @@ def helm_image_arguments(supply_lock: dict[str, Any]) -> list[str]:
             "kube-state-metrics.image",
             "full",
         ),
+        "docker.io/grafana/grafana:13.2.0": ("grafana.image", "hex"),
         "ghcr.io/jkroepke/kube-webhook-certgen:1.8.5": (
             "prometheusOperator.admissionWebhooks.patch.image",
             "hex",
@@ -217,7 +222,8 @@ def stage_artifacts(
 def helm_command(
     executable: str,
     action: list[str],
-    stage_dir: str,
+    chart_path: str,
+    values_path: str,
     monitoring_contract: dict[str, Any],
     supply_lock: dict[str, Any],
 ) -> str:
@@ -226,14 +232,133 @@ def helm_command(
         executable,
         *action,
         deployment["release"],
-        f"{stage_dir}/chart.tgz",
+        chart_path,
         "--namespace",
         deployment["namespace"],
         "--values",
-        f"{stage_dir}/values.yaml",
+        values_path,
         *helm_image_arguments(supply_lock),
     ]
     return shlex.join(command)
+
+
+def rendered_resource(source: str, kind: str, name: str) -> str:
+    matches = [
+        document
+        for document in re.split(r"(?m)^---\s*$", source)
+        if re.search(rf"(?m)^kind: {re.escape(kind)}\s*$", document)
+        and re.search(rf"(?m)^  name: {re.escape(name)}\s*$", document)
+    ]
+    require(
+        len(matches) == 1,
+        f"rendered monitoring resource must resolve once: {kind}/{name}",
+    )
+    return matches[0]
+
+
+def validate_rendered_resources(
+    source: str, monitoring_contract: dict[str, Any]
+) -> None:
+    release = monitoring_contract["deployment"]["release"]
+    grafana_name = f"{release}-grafana"
+    grafana = rendered_resource(source, "Deployment", grafana_name)
+    for fragment in (
+        "release: shell-watch",
+        "automountServiceAccountToken: false",
+        "runAsNonRoot: true",
+        "allowPrivilegeEscalation: false",
+        "type: RuntimeDefault",
+        'mountPath: "/etc/grafana/provisioning/datasources/datasources.yaml"',
+        'mountPath: "/var/lib/grafana/dashboards/default"',
+        'name: "GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION"',
+        'value: "true"',
+    ):
+        require(fragment in grafana, f"rendered Grafana deployment is missing: {fragment}")
+
+    service = rendered_resource(source, "Service", grafana_name)
+    require("type: ClusterIP" in service, "rendered Grafana service is not ClusterIP")
+    require("port: 80" in service, "rendered Grafana service port changed")
+
+    configuration = rendered_resource(source, "ConfigMap", grafana_name)
+    for fragment in (
+        "[auth.anonymous]",
+        "org_role = Viewer",
+        "[auth.basic]",
+        "enabled = false",
+        "uid: prometheus",
+        "url: http://shell-watch-kube-prometheu-prometheus.monitoring:9090/",
+        "uid: loki",
+        "url: http://shell-watch-loki-gateway.monitoring.svc.cluster.local",
+    ):
+        require(fragment in configuration, f"rendered Grafana config is missing: {fragment}")
+
+    dashboard = rendered_resource(
+        source, "ConfigMap", "shell-watch-grafana-dashboards"
+    )
+    for fragment in (
+        '"uid": "shell-watch-overview"',
+        '"title": "SHELL Watch Overview"',
+        '"uid": "prometheus"',
+        '"uid": "loki"',
+    ):
+        require(fragment in dashboard, f"rendered Grafana dashboard is missing: {fragment}")
+
+    policy = rendered_resource(
+        source, "NetworkPolicy", "shell-watch-grafana-ingress"
+    )
+    for fragment in (
+        "app.kubernetes.io/name: grafana",
+        "app.kubernetes.io/instance: shell-watch",
+        "policyTypes:",
+        "- Ingress",
+        "ingress: []",
+    ):
+        require(fragment in policy, f"rendered Grafana NetworkPolicy is missing: {fragment}")
+
+    grafana_monitors = [
+        document
+        for document in re.split(r"(?m)^---\s*$", source)
+        if re.search(r"(?m)^kind: ServiceMonitor\s*$", document)
+        and re.search(rf"(?m)^  name: {re.escape(grafana_name)}\s*$", document)
+    ]
+    require(not grafana_monitors, "rendered Grafana ServiceMonitor must stay disabled")
+
+    for kind, name in (
+        ("Prometheus", "shell-watch-kube-prometheu-prometheus"),
+        ("Alertmanager", "shell-watch-kube-prometheu-alertmanager"),
+    ):
+        workload = rendered_resource(source, kind, name)
+        require(
+            "podMetadata:" in workload and "release: shell-watch" in workload,
+            f"rendered {kind} runtime label changed",
+        )
+
+
+def template_local(
+    monitoring_contract: dict[str, Any], supply_lock: dict[str, Any]
+) -> None:
+    chart = require_staged_chart(supply_lock)
+    values = REPOSITORY_ROOT / monitoring_contract["deployment"]["values"]
+    command = shlex.split(
+        helm_command(
+            "helm",
+            ["template"],
+            str(chart),
+            str(values),
+            monitoring_contract,
+            supply_lock,
+        )
+    )
+    rendered = transport.run(
+        command,
+        label="local monitoring chart render",
+        timeout_seconds=180,
+    )
+    with tempfile.TemporaryDirectory(prefix="shell-watch-monitoring-render-") as temp:
+        rendered_path = Path(temp) / "monitoring.yaml"
+        rendered_path.write_text(rendered, encoding="utf-8")
+        image_validator.validate_rendered(rendered_path, SUPPLY_LOCK)
+    validate_rendered_resources(rendered, monitoring_contract)
 
 
 def render_release(
@@ -245,20 +370,23 @@ def render_release(
     command = helm_command(
         GUEST_HELM,
         ["template"],
-        stage_dir,
+        f"{stage_dir}/chart.tgz",
+        f"{stage_dir}/values.yaml",
         monitoring_contract,
         supply_lock,
     )
     rendered = shlex.quote(f"{stage_dir}/rendered.yaml")
     validator = shlex.quote(f"{stage_dir}/validate-images.py")
     lock = shlex.quote(f"{stage_dir}/supply.json")
-    remote(
+    source = remote(
         connection,
         f"set -eu; {command} > {rendered}; "
-        f"python3 {validator} --lock {lock} --rendered {rendered}",
+        f"python3 {validator} --lock {lock} --rendered {rendered}; "
+        f"cat {rendered}",
         label="MAKE monitoring rendered image validation",
         timeout_seconds=180,
     )
+    validate_rendered_resources(source, monitoring_contract)
 
 
 def install_release(
@@ -270,7 +398,8 @@ def install_release(
     command = helm_command(
         GUEST_HELM,
         ["upgrade", "--install"],
-        stage_dir,
+        f"{stage_dir}/chart.tgz",
+        f"{stage_dir}/values.yaml",
         monitoring_contract,
         supply_lock,
     )
@@ -284,27 +413,121 @@ def install_release(
     )
 
 
+def release_revision(
+    connection: transport.Connection,
+    namespace: str,
+    release: str,
+) -> int | None:
+    output = remote(
+        connection,
+        f"sudo -E KUBECONFIG={GUEST_KUBECONFIG} {GUEST_HELM} list "
+        f"--namespace {shlex.quote(namespace)} --all "
+        f"--filter {shlex.quote(f'^{release}$')} --output json",
+        label=f"MAKE monitoring release snapshot {release}",
+    )
+    try:
+        records = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise MonitoringDeployError("monitoring Helm release snapshot is invalid") from error
+    require(isinstance(records, list), "monitoring Helm release snapshot is invalid")
+    if not records:
+        return None
+    require(len(records) == 1, "monitoring Helm release snapshot is ambiguous")
+    record = records[0]
+    require(isinstance(record, dict), "monitoring Helm release snapshot is invalid")
+    require(record.get("name") == release, "monitoring Helm release snapshot changed")
+    require(
+        record.get("status") == "deployed",
+        "monitoring Helm release is not deployed",
+    )
+    revision = record.get("revision")
+    require(
+        (type(revision) is int and revision > 0)
+        or (isinstance(revision, str) and revision.isdigit() and int(revision) > 0),
+        "monitoring Helm release revision is invalid",
+    )
+    return int(cast(int | str, revision))
+
+
+def restore_release(
+    connection: transport.Connection,
+    namespace: str,
+    release: str,
+    revision: int | None,
+) -> None:
+    if revision is None:
+        action = f"uninstall {shlex.quote(release)}"
+    else:
+        action = f"rollback {shlex.quote(release)} {revision}"
+    remote(
+        connection,
+        f"set -eu; sudo -E KUBECONFIG={GUEST_KUBECONFIG} {GUEST_HELM} "
+        f"{action} --namespace {shlex.quote(namespace)} --wait --timeout 10m",
+        label=f"MAKE monitoring restore {release}",
+        timeout_seconds=660,
+    )
+
+
+def reconcile_install_failure(
+    connection: transport.Connection,
+    namespace: str,
+    release: str,
+    snapshot: int | None,
+    install_error: Exception,
+) -> None:
+    try:
+        observed = release_revision(connection, namespace, release)
+    except Exception as reconciliation_error:
+        install_error.add_note(
+            f"failed to reconcile {release}: {reconciliation_error}"
+        )
+        return
+    if observed == snapshot:
+        return
+    try:
+        restore_release(connection, namespace, release, snapshot)
+    except Exception as restore_error:
+        install_error.add_note(f"failed to restore {release}: {restore_error}")
+
+
+def cleanup_preserving_error(
+    connection: transport.Connection,
+    stage_dir: str,
+) -> None:
+    active_error = sys.exception()
+    try:
+        cleanup_guest(connection, stage_dir)
+    except Exception as cleanup_error:
+        if active_error is None:
+            raise
+        active_error.add_note(
+            f"temporary artifact cleanup also failed: {cleanup_error}"
+        )
+
+
 def wait_ready(
     connection: transport.Connection, monitoring_contract: dict[str, Any]
 ) -> None:
     namespace = monitoring_contract["deployment"]["namespace"]
+    selector = monitoring_contract["deployment"]["runtime_pod_selector"]
     command = (
         f"set -eu; K='sudo -E KUBECONFIG={GUEST_KUBECONFIG} k3s kubectl "
-        f"-n {namespace}'; "
-        "for SELECTOR in app.kubernetes.io/name=prometheus "
-        "app.kubernetes.io/name=alertmanager; do "
+        f"-n {shlex.quote(namespace)}'; "
+        "FIELD_SELECTOR='status.phase!=Succeeded,status.phase!=Failed'; "
         "FOUND=; for ATTEMPT in $(seq 1 60); do "
-        'FOUND=$($K get pod -l "$SELECTOR" -o name); '
+        f"FOUND=$($K get pod -l {shlex.quote(selector)} "
+        '--field-selector "$FIELD_SELECTOR" -o name); '
         'test -n "$FOUND" && break; sleep 2; done; '
         'test -n "$FOUND"; '
-        '$K wait --for=condition=Ready pod -l "$SELECTOR" --timeout=180s; '
-        "done"
+        f"$K wait --for=condition=Ready pod -l {shlex.quote(selector)} "
+        '--field-selector "$FIELD_SELECTOR" '
+        "--timeout=180s"
     )
     remote(
         connection,
         command,
         label="MAKE monitoring readiness",
-        timeout_seconds=660,
+        timeout_seconds=360,
     )
 
 
@@ -334,9 +557,13 @@ def deploy(
     *,
     approval: str | None = None,
     check_only: bool = False,
+    template_only: bool = False,
 ) -> None:
     monitoring_contract, supply_lock = validate_source()
     if check_only:
+        return
+    if template_only:
+        template_local(monitoring_contract, supply_lock)
         return
     require(approval == MAKE_APPROVAL, "exact MAKE monitoring approval is required")
     chart = require_staged_chart(supply_lock)
@@ -345,21 +572,45 @@ def deploy(
     connection = transport.resolve_connection(inventory_paths)
     preflight(connection)
     stage_dir: str | None = None
+    namespace = monitoring_contract["deployment"]["namespace"]
+    release = monitoring_contract["deployment"]["release"]
+    snapshot = release_revision(connection, namespace, release)
+    changed_release = False
     try:
         stage_dir = create_guest_stage(connection)
         stage_artifacts(connection, chart, values, stage_dir, chart_sha256)
         render_release(connection, stage_dir, monitoring_contract, supply_lock)
-        install_release(connection, stage_dir, monitoring_contract, supply_lock)
+        try:
+            install_release(connection, stage_dir, monitoring_contract, supply_lock)
+        except Exception as install_error:
+            reconcile_install_failure(
+                connection,
+                namespace,
+                release,
+                snapshot,
+                install_error,
+            )
+            raise
+        changed_release = True
         wait_ready(connection, monitoring_contract)
         verify_runtime_images(connection, stage_dir, monitoring_contract)
+    except Exception as error:
+        if changed_release:
+            try:
+                restore_release(connection, namespace, release, snapshot)
+            except Exception as restore_error:
+                error.add_note(f"failed to restore {release}: {restore_error}")
+        raise
     finally:
         if stage_dir is not None:
-            cleanup_guest(connection, stage_dir)
+            cleanup_preserving_error(connection, stage_dir)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check-only", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--check-only", action="store_true")
+    modes.add_argument("--template-only", action="store_true")
     parser.add_argument("--approval")
     parser.add_argument(
         "--inventory", type=Path, action="append", dest="inventory_paths", default=None
@@ -370,13 +621,18 @@ def main() -> int:
         REPOSITORY_ROOT / ".local/ansible/connection-inventory.yml",
     ]
     try:
-        deploy(inventory_paths, approval=args.approval, check_only=args.check_only)
-        message = (
-            "validated MAKE monitoring source"
-            if args.check_only
-            else "deployed MAKE monitoring"
+        deploy(
+            inventory_paths,
+            approval=args.approval,
+            check_only=args.check_only,
+            template_only=args.template_only,
         )
-        print(message)
+        if args.check_only:
+            print("validated MAKE monitoring source")
+        elif args.template_only:
+            print("rendered MAKE monitoring chart")
+        else:
+            print("deployed MAKE monitoring")
         return 0
     except (
         MonitoringDeployError,
@@ -385,6 +641,8 @@ def main() -> int:
         ValueError,
     ) as error:
         print(f"MAKE monitoring deployment failed: {error}", file=sys.stderr)
+        for note in getattr(error, "__notes__", ()):
+            print(f"MAKE monitoring deployment detail: {note}", file=sys.stderr)
         return 2
 
 

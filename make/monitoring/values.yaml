@@ -1,11 +1,146 @@
 ---
 # MAKE values for WATCH's pinned kube-prometheus-stack policy.
 #
-# This first slice proves Prometheus scraping and Alertmanager delivery. The
-# dashboard layer is deferred, so Grafana stays disabled and has no password
-# or other secret in the repository.
+# This slice proves Prometheus scraping, Alertmanager delivery, and one small
+# Grafana dashboard. Default dashboards stay disabled to keep the lab bounded.
 grafana:
-  enabled: false
+  enabled: true
+  defaultDashboardsEnabled: false
+  podLabels:
+    release: shell-watch
+  env:
+    GF_SECURITY_DISABLE_INITIAL_ADMIN_CREATION: "true"
+  grafana.ini:
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer
+    auth.basic:
+      enabled: false
+  rbac:
+    create: false
+  serviceAccount:
+    create: true
+    autoMount: false
+    automountServiceAccountToken: false
+  automountServiceAccountToken: false
+  sidecar:
+    dashboards:
+      enabled: false
+    datasources:
+      enabled: false
+  serviceMonitor:
+    enabled: false
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          uid: prometheus
+          url: http://shell-watch-kube-prometheu-prometheus.monitoring:9090/
+          access: proxy
+          isDefault: true
+          jsonData:
+            httpMethod: POST
+            timeInterval: 30s
+        - name: Loki
+          type: loki
+          uid: loki
+          url: http://shell-watch-loki-gateway.monitoring.svc.cluster.local
+          access: proxy
+          isDefault: false
+          jsonData:
+            maxLines: 1000
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: ""
+          type: file
+          disableDeletion: true
+          editable: false
+          options:
+            path: /var/lib/grafana/dashboards/default
+  dashboardsConfigMaps:
+    default: shell-watch-grafana-dashboards
+  extraObjects:
+    - apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: shell-watch-grafana-dashboards
+        namespace: monitoring
+        labels:
+          shell.platform/owner: make
+          dashboard-provider: "default"
+          app.kubernetes.io/instance: shell-watch
+      data:
+        shell-watch-overview.json: |
+          {
+            "annotations": {"list": []},
+            "editable": false,
+            "panels": [
+              {
+                "datasource": {"type": "prometheus", "uid": "prometheus"},
+                "fieldConfig": {"defaults": {}, "overrides": []},
+                "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+                "id": 1,
+                "options": {
+                  "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom",
+                    "showLegend": true
+                  },
+                  "tooltip": {"mode": "single", "sort": "none"}
+                },
+                "targets": [{"expr": "up", "refId": "A"}],
+                "title": "Prometheus targets",
+                "type": "timeseries"
+              },
+              {
+                "datasource": {"type": "loki", "uid": "loki"},
+                "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+                "id": 2,
+                "options": {"showTime": true, "sortOrder": "Descending"},
+                "targets": [
+                  {"expr": "{namespace=\"monitoring\"}", "refId": "A"}
+                ],
+                "title": "Monitoring logs",
+                "type": "logs"
+              }
+            ],
+            "schemaVersion": 39,
+            "tags": ["shell", "watch"],
+            "templating": {"list": []},
+            "time": {"from": "now-15m", "to": "now"},
+            "timezone": "utc",
+            "title": "SHELL Watch Overview",
+            "uid": "shell-watch-overview",
+            "version": 1
+          }
+    - apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: shell-watch-grafana-ingress
+        namespace: monitoring
+        labels:
+          shell.platform/owner: make
+      spec:
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: grafana
+            app.kubernetes.io/instance: shell-watch
+        policyTypes:
+          - Ingress
+        ingress: []
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 200m
+      memory: 1Gi
 
 prometheus:
   prometheusSpec:

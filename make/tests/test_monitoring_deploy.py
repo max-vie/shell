@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import io
 import json
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 
@@ -24,7 +27,7 @@ for scripts_root in (MAKE_SCRIPTS_ROOT, WATCH_SCRIPTS_ROOT, TAR_SCRIPTS_ROOT):
         sys.path.insert(0, str(scripts_root))
 
 
-def load(name: str, path: Path):
+def load(name: str, path: Path) -> Any:
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load MAKE monitoring script: {path}")
@@ -64,6 +67,15 @@ class TestMonitoringDeploy(unittest.TestCase):
             deploy.deploy([Path("/does/not/exist")], check_only=True)
         resolve.assert_not_called()
         staged.assert_not_called()
+
+    def test_template_only_renders_before_inventory_access(self) -> None:
+        with (
+            mock.patch.object(deploy, "template_local") as template,
+            mock.patch.object(deploy.transport, "resolve_connection") as resolve,
+        ):
+            deploy.deploy([Path("/does/not/exist")], template_only=True)
+        template.assert_called_once()
+        resolve.assert_not_called()
 
     def test_transport_requires_authoritative_gcp_route_values(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -132,17 +144,26 @@ class TestMonitoringDeploy(unittest.TestCase):
             "sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106",
             arguments,
         )
-        self.assertNotIn("grafana", command)
+        self.assertIn(
+            "grafana.image.repository=grafana",
+            command,
+        )
+        self.assertIn(
+            "grafana.image.tag=13.2.0",
+            command,
+        )
 
-    def test_readiness_timeout_covers_both_selector_budgets(self) -> None:
+    def test_readiness_timeout_covers_all_selector_budgets(self) -> None:
         monitoring_contract = deploy.contract.validate_contract()
         with mock.patch.object(deploy, "remote") as remote:
             deploy.wait_ready(mock.sentinel.connection, monitoring_contract)
-        self.assertEqual(660, remote.call_args.kwargs["timeout_seconds"])
+        self.assertEqual(360, remote.call_args.kwargs["timeout_seconds"])
         command = remote.call_args.args[1]
         self.assertIn("seq 1 60", command)
         self.assertIn("--timeout=180s", command)
-        self.assertGreater(660, 2 * ((60 * 2) + 180))
+        self.assertIn("release=shell-watch", command)
+        self.assertIn("status.phase!=Succeeded,status.phase!=Failed", command)
+        self.assertGreater(360, (60 * 2) + 180)
 
     def test_runtime_image_query_excludes_coexisting_log_releases(self) -> None:
         monitoring_contract = deploy.contract.validate_contract()
@@ -154,6 +175,46 @@ class TestMonitoringDeploy(unittest.TestCase):
             )
         command = remote.call_args.args[1]
         self.assertIn("get pods -l release=shell-watch", command)
+
+    def test_release_snapshot_and_restore_commands_are_fail_closed(self) -> None:
+        with mock.patch.object(
+            deploy,
+            "remote",
+            return_value='[{"name":"shell-watch","status":"deployed","revision":"3"}]',
+        ):
+            self.assertEqual(
+                3,
+                deploy.release_revision(
+                    mock.sentinel.connection,
+                    "monitoring",
+                    "shell-watch",
+                ),
+            )
+        with mock.patch.object(deploy, "remote") as remote:
+            deploy.restore_release(
+                mock.sentinel.connection,
+                "monitoring",
+                "shell-watch",
+                3,
+            )
+            self.assertIn("rollback shell-watch 3", remote.call_args.args[1])
+            deploy.restore_release(
+                mock.sentinel.connection,
+                "monitoring",
+                "shell-watch",
+                None,
+            )
+            self.assertIn("uninstall shell-watch", remote.call_args.args[1])
+
+    def test_render_validation_requires_the_grafana_boundary(self) -> None:
+        with self.assertRaisesRegex(
+            deploy.MonitoringDeployError,
+            "Deployment/shell-watch-grafana",
+        ):
+            deploy.validate_rendered_resources(
+                "kind: Service\nmetadata:\n  name: shell-watch-grafana\n",
+                deploy.contract.validate_contract(),
+            )
 
     def test_rendered_and_running_images_must_match_tar(self) -> None:
         lock = deploy.supply.validate_public()
@@ -247,6 +308,7 @@ class TestMonitoringDeploy(unittest.TestCase):
                 return_value=mock.sentinel.connection,
             ),
             mock.patch.object(deploy, "preflight"),
+            mock.patch.object(deploy, "release_revision", return_value=None),
             mock.patch.object(
                 deploy, "create_guest_stage", return_value="/tmp/tmp.safe"
             ),
@@ -262,6 +324,126 @@ class TestMonitoringDeploy(unittest.TestCase):
                     [Path("inventory")], approval="environment-gcp/make/monitoring"
                 )
         cleanup.assert_called_once_with(mock.sentinel.connection, "/tmp/tmp.safe")
+
+    def test_post_install_failure_restores_the_prior_revision(self) -> None:
+        monitoring_contract = deploy.contract.validate_contract()
+        supply_lock = deploy.supply.validate_public()
+        with (
+            mock.patch.object(
+                deploy,
+                "validate_source",
+                return_value=(monitoring_contract, supply_lock),
+            ),
+            mock.patch.object(
+                deploy, "require_staged_chart", return_value=Path("/tmp/chart.tgz")
+            ),
+            mock.patch.object(
+                deploy.transport,
+                "resolve_connection",
+                return_value=mock.sentinel.connection,
+            ),
+            mock.patch.object(deploy, "preflight"),
+            mock.patch.object(deploy, "release_revision", return_value=3),
+            mock.patch.object(
+                deploy, "create_guest_stage", return_value="/tmp/tmp.safe"
+            ),
+            mock.patch.object(deploy, "stage_artifacts"),
+            mock.patch.object(deploy, "render_release"),
+            mock.patch.object(deploy, "install_release"),
+            mock.patch.object(
+                deploy,
+                "wait_ready",
+                side_effect=RuntimeError("readiness failed"),
+            ),
+            mock.patch.object(deploy, "restore_release") as restore,
+            mock.patch.object(deploy, "cleanup_guest"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "readiness failed"):
+                deploy.deploy([Path("inventory")], approval=deploy.MAKE_APPROVAL)
+        restore.assert_called_once_with(
+            mock.sentinel.connection,
+            "monitoring",
+            "shell-watch",
+            3,
+        )
+
+    def test_ambiguous_install_failure_restores_an_observed_new_release(self) -> None:
+        monitoring_contract = deploy.contract.validate_contract()
+        supply_lock = deploy.supply.validate_public()
+        with (
+            mock.patch.object(
+                deploy,
+                "validate_source",
+                return_value=(monitoring_contract, supply_lock),
+            ),
+            mock.patch.object(
+                deploy, "require_staged_chart", return_value=Path("/tmp/chart.tgz")
+            ),
+            mock.patch.object(
+                deploy.transport,
+                "resolve_connection",
+                return_value=mock.sentinel.connection,
+            ),
+            mock.patch.object(deploy, "preflight"),
+            mock.patch.object(deploy, "release_revision", side_effect=[None, 1]),
+            mock.patch.object(
+                deploy, "create_guest_stage", return_value="/tmp/tmp.safe"
+            ),
+            mock.patch.object(deploy, "stage_artifacts"),
+            mock.patch.object(deploy, "render_release"),
+            mock.patch.object(
+                deploy,
+                "install_release",
+                side_effect=RuntimeError("SSH completion was ambiguous"),
+            ),
+            mock.patch.object(deploy, "restore_release") as restore,
+            mock.patch.object(deploy, "cleanup_guest"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                deploy.deploy([Path("inventory")], approval=deploy.MAKE_APPROVAL)
+        restore.assert_called_once_with(
+            mock.sentinel.connection,
+            "monitoring",
+            "shell-watch",
+            None,
+        )
+
+    def test_cleanup_failure_preserves_the_deployment_error(self) -> None:
+        with mock.patch.object(
+            deploy,
+            "cleanup_guest",
+            side_effect=RuntimeError("cleanup failed"),
+        ):
+            try:
+                raise RuntimeError("deployment failed")
+            except RuntimeError as error:
+                with self.assertRaisesRegex(RuntimeError, "deployment failed") as raised:
+                    try:
+                        raise error
+                    finally:
+                        deploy.cleanup_preserving_error(
+                            mock.sentinel.connection,
+                            "/tmp/tmp.safe",
+                        )
+        self.assertTrue(
+            any("cleanup failed" in note for note in raised.exception.__notes__)
+        )
+
+    def test_main_reports_compensation_and_cleanup_details(self) -> None:
+        error = deploy.MonitoringDeployError("primary deployment failure")
+        error.add_note("failed to restore shell-watch: rollback failed")
+        error.add_note("temporary artifact cleanup also failed: cleanup failed")
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(deploy, "deploy", side_effect=error),
+            mock.patch.object(sys, "argv", ["deploy_monitoring.py", "--check-only"]),
+            redirect_stderr(stderr),
+        ):
+            self.assertEqual(2, deploy.main())
+        output = stderr.getvalue()
+        self.assertIn("primary deployment failure", output)
+        self.assertIn("rollback failed", output)
+        self.assertIn("cleanup failed", output)
 
 
 if __name__ == "__main__":

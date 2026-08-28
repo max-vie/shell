@@ -63,6 +63,8 @@ class TestLogsDeploy(unittest.TestCase):
         self.assertIn("networkPolicy:\n  enabled: true", alloy_values)
         self.assertIn("service:\n  enabled: false", alloy_values)
         self.assertIn("shell-watch-loki-allow-alloy-gateway", loki_values)
+        self.assertIn("app.kubernetes.io/name: grafana", loki_values)
+        self.assertIn("app.kubernetes.io/instance: shell-watch", loki_values)
         self.assertIn("shell-watch-loki-allow-gateway", loki_values)
         self.assertIn("own_namespace = true", alloy_values)
         self.assertIn("namespaces: [monitoring]", alloy_values)

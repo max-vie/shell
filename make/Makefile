@@ -174,6 +174,7 @@ monitoring-check:
 	$(PYTHON) "$(MONITORING_DEPLOY_SCRIPT)" --check-only
 
 monitoring-preview: monitoring-check
+	$(PYTHON) "$(MONITORING_DEPLOY_SCRIPT)" --template-only
 
 # MAKE is the only lifecycle allowed to mutate Kubernetes workloads.
 monitoring-apply:
