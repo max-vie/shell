@@ -23,7 +23,8 @@ check-logs:
 	$(PYTHON) $(REPOSITORY_ROOT)/tar/scripts/validate_watch_logs.py
 	$(PYTHON) -m unittest $(WATCH_ROOT)/tests/test_logs.py
 
-# Read-only live verification through the fixed first GCP K3s server.
+# Read-only live verification for metrics and Grafana through the fixed first
+# GCP K3s server.
 verify:
 	$(PYTHON) $(VERIFY_SCRIPT) \
 		--inventory "$(INVENTORY)" \
