@@ -46,7 +46,23 @@ def read_json(path: Path, label: str) -> dict[str, Any]:
     return cast(dict[str, Any], value)
 
 
-def expected_images(lock: dict[str, Any]) -> tuple[set[str], set[str]]:
+def canonical_image(image: str) -> str:
+    name, separator, digest = image.rpartition("@")
+    if not separator:
+        return image
+    require(
+        DIGEST_RE.fullmatch(digest) is not None,
+        "monitoring image digest is invalid",
+    )
+    tag_separator = name.rfind(":")
+    if tag_separator > name.rfind("/"):
+        name = name[:tag_separator]
+    return f"{name}@{digest}"
+
+
+def expected_images(
+    lock: dict[str, Any], include_images: set[str] | None = None
+) -> tuple[set[str], set[str]]:
     digests_value = lock.get("runtime_image_digests")
     required_value = lock.get("required_runtime_images")
     persistent_value = lock.get("persistent_runtime_images")
@@ -69,13 +85,22 @@ def expected_images(lock: dict[str, Any]) -> tuple[set[str], set[str]]:
     )
     require(set(digests) == set(required), "TAR runtime image sets disagree")
     require(set(persistent) <= set(required), "TAR persistent image set is invalid")
+    selected = set(required) if include_images is None else include_images
+    if not selected:
+        raise MonitoringImageError("selected monitoring image set is empty")
+    require(selected <= set(required), "selected monitoring image is not in TAR")
     for digest in digests.values():
         require(
             isinstance(digest, str) and DIGEST_RE.fullmatch(digest) is not None,
             "TAR runtime image digest is invalid",
         )
-    rendered = {f"{image}@{digests[image]}" for image in required}
-    running = {f"{image}@{digests[image]}" for image in persistent}
+    rendered = {canonical_image(f"{image}@{digests[image]}") for image in selected}
+    running = {
+        canonical_image(f"{image}@{digests[image]}")
+        for image in persistent
+        if image in selected
+    }
+    require(len(rendered) == len(selected), "TAR monitoring image identities overlap")
     return rendered, running
 
 
@@ -89,8 +114,8 @@ def rendered_images(path: Path) -> set[str]:
     for line in source.splitlines():
         image_match = IMAGE_LINE_RE.match(line)
         if image_match:
-            images.add(image_match.group(1))
-        images.update(RELOADER_RE.findall(line))
+            images.add(canonical_image(image_match.group(1)))
+        images.update(canonical_image(image) for image in RELOADER_RE.findall(line))
     require(bool(images), "rendered manifest contains no runtime images")
     return images
 
@@ -132,13 +157,19 @@ def running_images(path: Path) -> set[str]:
                     "running pod image is invalid",
                 )
                 image = cast(str, image_value)
-                images.add(image)
+                images.add(canonical_image(image))
     require(bool(images), "running pod document contains no active images")
     return images
 
 
-def validate_rendered(rendered_path: Path, lock_path: Path) -> set[str]:
-    expected, _ = expected_images(read_json(lock_path, "TAR WATCH supply lock"))
+def validate_rendered(
+    rendered_path: Path,
+    lock_path: Path,
+    include_images: set[str] | None = None,
+) -> set[str]:
+    expected, _ = expected_images(
+        read_json(lock_path, "TAR WATCH supply lock"), include_images
+    )
     actual = rendered_images(rendered_path)
     require(actual == expected, "rendered monitoring image set does not match TAR")
     return actual
@@ -155,13 +186,20 @@ def validate_running(pods_path: Path, lock_path: Path) -> set[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lock", type=Path, required=True)
+    parser.add_argument(
+        "--include-image",
+        action="append",
+        default=None,
+        help="limit rendered-image validation to one or more locked images",
+    )
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument("--rendered", type=Path)
     inputs.add_argument("--running-pods", type=Path)
     args = parser.parse_args()
     try:
         if args.rendered is not None:
-            validate_rendered(args.rendered, args.lock)
+            selected = set(args.include_image) if args.include_image else None
+            validate_rendered(args.rendered, args.lock, selected)
             print("validated rendered monitoring image pins")
         else:
             validate_running(args.running_pods, args.lock)

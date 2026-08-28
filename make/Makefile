@@ -30,6 +30,8 @@ MONITORING_DEPLOY_SCRIPT := $(MAKE_ROOT)/scripts/deploy_monitoring.py
 MONITORING_APPROVAL := environment-gcp/make/monitoring
 MONITORING_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
 MONITORING_CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
+LOGS_DEPLOY_SCRIPT := $(MAKE_ROOT)/scripts/deploy_logs.py
+LOGS_APPROVAL := environment-gcp/make/logs
 
 TRUST_VALIDATOR := $(MAKE_ROOT)/scripts/validate_cluster_trust.py
 INTERMEDIATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_cluster_intermediate.py
@@ -37,9 +39,9 @@ CERTIFICATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_consumer_certificate.py
 SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_kubernetes_supply.py
 TRUST_VALUES := $(MAKE_ROOT)/cert-manager/values.yaml
 
-.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply
+.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply logs-check logs-preview logs-apply
 
-check: test trust-preview repository-check monitoring-check
+check: test trust-preview repository-check monitoring-check logs-check
 
 test:
 	$(PYTHON) -m unittest discover -s $(MAKE_ROOT)/tests -p 'test_*.py'
@@ -177,6 +179,20 @@ monitoring-preview: monitoring-check
 monitoring-apply:
 	@test "$(APPROVAL)" = "$(MONITORING_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/monitoring' >&2; exit 2; }
 	$(PYTHON) "$(MONITORING_DEPLOY_SCRIPT)" \
+		--inventory "$(MONITORING_INVENTORY)" \
+		--inventory "$(MONITORING_CONNECTION_INVENTORY)" \
+		--approval "$(APPROVAL)"
+
+# Logs source validation remains offline; deployment is separate from metrics.
+logs-check: monitoring-check
+	$(PYTHON) "$(LOGS_DEPLOY_SCRIPT)" --check-only
+
+logs-preview: logs-check
+	$(PYTHON) "$(LOGS_DEPLOY_SCRIPT)" --template-only
+
+logs-apply:
+	@test "$(APPROVAL)" = "$(LOGS_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/logs' >&2; exit 2; }
+	$(PYTHON) "$(LOGS_DEPLOY_SCRIPT)" \
 		--inventory "$(MONITORING_INVENTORY)" \
 		--inventory "$(MONITORING_CONNECTION_INVENTORY)" \
 		--approval "$(APPROVAL)"

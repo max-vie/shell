@@ -314,13 +314,15 @@ def verify_runtime_images(
     monitoring_contract: dict[str, Any],
 ) -> None:
     namespace = monitoring_contract["deployment"]["namespace"]
+    selector = monitoring_contract["deployment"]["runtime_pod_selector"]
     pods = shlex.quote(f"{stage_dir}/running-pods.json")
     validator = shlex.quote(f"{stage_dir}/validate-images.py")
     lock = shlex.quote(f"{stage_dir}/supply.json")
     remote(
         connection,
         f"set -eu; sudo -E KUBECONFIG={GUEST_KUBECONFIG} k3s kubectl "
-        f"-n {shlex.quote(namespace)} get pods -o json > {pods}; "
+        f"-n {shlex.quote(namespace)} get pods -l {shlex.quote(selector)} "
+        f"-o json > {pods}; "
         f"python3 {validator} --lock {lock} --running-pods {pods}",
         label="MAKE monitoring running image validation",
         timeout_seconds=120,

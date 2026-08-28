@@ -144,6 +144,17 @@ class TestMonitoringDeploy(unittest.TestCase):
         self.assertIn("--timeout=180s", command)
         self.assertGreater(660, 2 * ((60 * 2) + 180))
 
+    def test_runtime_image_query_excludes_coexisting_log_releases(self) -> None:
+        monitoring_contract = deploy.contract.validate_contract()
+        with mock.patch.object(deploy, "remote") as remote:
+            deploy.verify_runtime_images(
+                mock.sentinel.connection,
+                "/tmp/tmp.safe",
+                monitoring_contract,
+            )
+        command = remote.call_args.args[1]
+        self.assertIn("get pods -l release=shell-watch", command)
+
     def test_rendered_and_running_images_must_match_tar(self) -> None:
         lock = deploy.supply.validate_public()
         expected, persistent = images.expected_images(lock)
@@ -186,6 +197,37 @@ class TestMonitoringDeploy(unittest.TestCase):
             )
             with self.assertRaisesRegex(images.MonitoringImageError, "does not match"):
                 images.validate_rendered(rendered_path, lock_path)
+
+    def test_rendered_validation_can_select_one_release_image_set(self) -> None:
+        lock = deploy.supply.validate_public()
+        selected = {
+            "quay.io/prometheus/prometheus:v3.14.0-distroless",
+            "quay.io/prometheus-operator/prometheus-operator:v0.93.1",
+        }
+        expected, _ = images.expected_images(lock, selected)
+        with tempfile.TemporaryDirectory() as temporary:
+            rendered = Path(temporary) / "rendered.yaml"
+            rendered.write_text(
+                "\n".join(f"image: {image}" for image in sorted(expected)),
+                encoding="utf-8",
+            )
+            lock_path = Path(temporary) / "supply.json"
+            lock_path.write_text(json.dumps(lock), encoding="utf-8")
+            self.assertEqual(
+                expected,
+                images.validate_rendered(rendered, lock_path, selected),
+            )
+
+    def test_tagged_and_digest_only_images_share_the_locked_identity(self) -> None:
+        digest = "sha256:" + "a" * 64
+        self.assertEqual(
+            f"docker.io/grafana/loki@{digest}",
+            images.canonical_image(f"docker.io/grafana/loki:3.7.6@{digest}"),
+        )
+        self.assertEqual(
+            f"registry.example:5000/team/image@{digest}",
+            images.canonical_image(f"registry.example:5000/team/image@{digest}"),
+        )
 
     def test_guest_stage_is_cleaned_when_install_fails(self) -> None:
         monitoring_contract = deploy.contract.validate_contract()
