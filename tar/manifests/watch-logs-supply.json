@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "2.0.0",
+  "contract_id": "watch-logs-supply",
+  "description": "TAR source pins for the first WATCH Alloy and Loki logs slice.",
+  "policy_owner": "tar",
+  "execution_owner": "make",
+  "proof_status": "source-reference-only",
+  "environment": "environment-gcp",
+  "staging": {
+    "mode": "local-verified-artifacts",
+    "network_acquisition_owner": "tar",
+    "consumer_network_acquisition": false,
+    "artifact_directory": "watch",
+    "chart_cache_layout": "charts/{name}-{version}.tgz"
+  },
+  "charts": {
+    "loki": {
+      "repository": "https://grafana-community.github.io/helm-charts",
+      "name": "loki",
+      "version": "18.11.2",
+      "source": "https://github.com/grafana-community/helm-charts/releases/download/loki-18.11.2/loki-18.11.2.tgz",
+      "size_bytes": 196037,
+      "sha256": "0848bc2a40bbb8c78d8830fdf2fa79596db395a0d33d539d94c9669d9acc1c59"
+    },
+    "alloy": {
+      "repository": "https://grafana.github.io/helm-charts",
+      "name": "alloy",
+      "version": "1.11.1",
+      "source": "https://github.com/grafana/helm-charts/releases/download/alloy-1.11.1/alloy-1.11.1.tgz",
+      "size_bytes": 32214,
+      "sha256": "cc4cd48a885c070fe8b2929971552852375c11e92d95fc6337d0c3fa277ac575"
+    }
+  },
+  "runtime_image_platform": "linux/amd64",
+  "runtime_image_digests": {
+    "docker.io/grafana/loki:3.7.6": "sha256:83c76da7858a8f4f88117ac521864ac33896fdae7a352a1df4068556e7513f64",
+    "docker.io/nginxinc/nginx-unprivileged:1.31-alpine": "sha256:f652dfb31ebafe499d61adcbbf6007d898b64cb11234bc6ff864fbbc3ca043b8",
+    "docker.io/grafana/alloy:v1.18.1": "sha256:754409730f1a4ed9781f8a2ea3b6a8c55750ee125a267ecf8fb449f9a25c109a",
+    "quay.io/prometheus-operator/prometheus-config-reloader:v0.91.0": "sha256:7d9e4eea5f1139e602508871f422b0116c60e87c662f3dcd234d5ab60cd0d8c1"
+  },
+  "required_runtime_images": [
+    "docker.io/grafana/loki:3.7.6",
+    "docker.io/nginxinc/nginx-unprivileged:1.31-alpine",
+    "docker.io/grafana/alloy:v1.18.1",
+    "quay.io/prometheus-operator/prometheus-config-reloader:v0.91.0"
+  ],
+  "persistent_runtime_images": [
+    "docker.io/grafana/loki:3.7.6",
+    "docker.io/nginxinc/nginx-unprivileged:1.31-alpine",
+    "docker.io/grafana/alloy:v1.18.1",
+    "quay.io/prometheus-operator/prometheus-config-reloader:v0.91.0"
+  ]
+}
