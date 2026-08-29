@@ -2,20 +2,25 @@
   "schema_version": "1.0",
   "contract_version": "1.0.0",
   "contract_id": "grafana-recovery-drill",
-  "description": "Source policy for a bounded GCP Grafana recovery drill.",
+  "description": "Bounded WATCH recovery evidence for the GCP Grafana deployment.",
   "policy_owner": "watch",
   "execution_owner": "make",
+  "observer_owner": "watch",
+  "consumer_owners": ["make", "watch"],
   "proof_status": "source-only",
   "environment": "environment-gcp",
   "cluster": {
     "name": "gcp",
-    "nodes": ["gcp-k3s-01", "gcp-k3s-02", "gcp-k3s-03"]
+    "control_plane": "k3s",
+    "nodes": ["gcp-k3s-01", "gcp-k3s-02", "gcp-k3s-03"],
+    "first_server": "gcp-k3s-01"
   },
   "approval": "environment-gcp/watch/grafana-unavailable",
   "target": {
     "kind": "Deployment",
     "namespace": "monitoring",
     "name": "shell-watch-grafana",
+    "service": "shell-watch-grafana",
     "healthy_replicas": 1,
     "annotation": "shell.internal/recovery-drill"
   },
@@ -23,12 +28,29 @@
     "name": "ShellWatchGrafanaUnavailable",
     "query": "kube_deployment_status_replicas_available{namespace=\"monitoring\",deployment=\"shell-watch-grafana\"} < 1",
     "hold_seconds": 60,
+    "max_fire_seconds": 240,
+    "max_resolve_seconds": 300,
     "labels": {
       "owner": "watch",
       "drill": "grafana-unavailability",
       "severity": "warning"
     }
   },
-  "stability": {"samples": 20, "interval_seconds": 30},
-  "limits": {"max_outage_seconds": 300}
+  "stability": {
+    "samples": 20,
+    "interval_seconds": 30,
+    "max_memory_fraction": 0.8,
+    "log_freshness_seconds": 300,
+    "memory_limits_mib": {
+      "prometheus": 1280,
+      "grafana": 1024
+    }
+  },
+  "logs": {
+    "query": "{namespace=\"monitoring\",pod=~\"shell-watch-grafana.*\"}",
+    "max_entries": 20
+  },
+  "limits": {
+    "max_outage_seconds": 300
+  }
 }

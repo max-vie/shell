@@ -24,3 +24,7 @@ spec:
             owner: watch
             drill: grafana-unavailability
             severity: warning
+          annotations:
+            summary: Grafana is unavailable
+            description: >-
+              The shell-watch Grafana deployment has no available replicas.

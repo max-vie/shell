@@ -127,6 +127,25 @@ class TestMonitoringScripts(unittest.TestCase):
         self.assertNotIn("/tmp/shell-watch-port-forward.log", command)
         self.assertEqual(45, ssh.call_args.kwargs["timeout_seconds"])
 
+    def test_query_can_filter_response_on_the_guest(self) -> None:
+        with (
+            mock.patch.object(verify, "resolve_service", return_value="loki-svc"),
+            mock.patch.object(
+                verify.transport, "ssh", return_value="FRESH_LOG_ENTRIES=1"
+            ) as ssh,
+        ):
+            verify.query_service(
+                mock.sentinel.connection,
+                "monitoring",
+                "release=shell-watch",
+                80,
+                "/loki/api/v1/query_range?limit=1",
+                "import sys; print('FRESH_LOG_ENTRIES=1')",
+            )
+        command = ssh.call_args.kwargs["command"]
+        self.assertIn("python3 -c", command)
+        self.assertIn("FRESH_LOG_ENTRIES=1", command)
+
     def test_grafana_health_uses_the_contract_path(self) -> None:
         with mock.patch.object(
             verify,

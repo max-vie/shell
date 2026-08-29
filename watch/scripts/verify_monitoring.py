@@ -105,9 +105,13 @@ def query_service(
     selector: str,
     service_port: int,
     path: str,
+    filter_code: str | None = None,
 ) -> str:
     require(API_PATH_RE.fullmatch(path) is not None, "WATCH API path is unsafe")
     service = resolve_service(connection, namespace, selector, service_port)
+    response = 'cat "$STAGE/response.json"'
+    if filter_code is not None:
+        response += f" | python3 -c {shlex.quote(filter_code)}"
     command = (
         "set -eu; umask 077; STAGE=$(mktemp -d); PFPID=; "
         'trap \'test -z "$PFPID" || kill "$PFPID" 2>/dev/null || true; '
@@ -121,7 +125,7 @@ def query_service(
         f'"http://127.0.0.1:$PORT{path}" >"$STAGE/response.json"; '
         "then READY=1; break; fi; sleep 1; done; "
         'test "${READY:-}" = 1 || { cat "$STAGE/port-forward.log" >&2; exit 1; }; '
-        'cat "$STAGE/response.json"'
+        f"{response}"
     )
     return transport.ssh(
         connection=connection,
