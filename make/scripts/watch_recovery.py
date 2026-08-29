@@ -484,3 +484,396 @@ def start_restore_guard(recovery: observer.RecoveryObserver, operation: str) -> 
     if not values:
         raise RecoveryDrillError("Grafana restore guard did not return a process ID")
     return int(values[-1])
+
+
+def stop_restore_guard(
+    recovery: observer.RecoveryObserver, pid: int, operation: str
+) -> bool:
+    require(pid > 0, "Grafana restore guard process ID is invalid")
+    command = (
+        f"ARGS=$(ps -p {pid} -o args= 2>/dev/null) || exit 1; "
+        f"printf '%s' \"$ARGS\" | grep -F -- {shlex.quote(operation)} >/dev/null || exit 1; "
+        f"kill -TERM -- -{pid} 2>/dev/null || exit 1; "
+        "for ATTEMPT in $(seq 1 20); do "
+        f"kill -0 {pid} 2>/dev/null || {{ printf cancelled; exit 0; }}; "
+        "sleep 0.1; done; exit 1"
+    )
+    try:
+        output = transport.ssh(
+            connection=recovery.connection,
+            command=command,
+            label="MAKE stop Grafana restore guard",
+        )
+        return output.strip().endswith("cancelled")
+    except (transport.TransportError, OSError):
+        return False
+
+
+def wait_until(
+    description: str, predicate: Callable[[], bool], timeout: int, interval: int = 5
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(interval)
+    raise RecoveryDrillError(f"timed out waiting for {description}")
+
+
+def healthy(recovery: observer.RecoveryObserver) -> bool:
+    document = recovery.deployment()
+    return (
+        document.get("spec", {}).get("replicas") == recovery.target["healthy_replicas"]
+        and document.get("status", {}).get("availableReplicas")
+        == recovery.target["healthy_replicas"]
+        and recovery.endpoints() > 0
+    )
+
+
+def alert_firing(recovery: observer.RecoveryObserver) -> bool:
+    state = recovery.alert_state()
+    return state["loaded"] and state["firing"] and state["active"]
+
+
+def alert_clear(recovery: observer.RecoveryObserver) -> bool:
+    state = recovery.alert_state()
+    return state["loaded"] and not state["firing"] and not state["active"]
+
+
+def _error_text(error: BaseException) -> str:
+    return str(error) or error.__class__.__name__
+
+
+def append_failure(current: str | None, error: BaseException | str) -> str:
+    detail = " ".join(
+        (error if isinstance(error, str) else _error_text(error)).splitlines()
+    )[:500]
+    if any(
+        forbidden in detail.lower()
+        for forbidden in ("password", "token", "kubeconfig", "private key")
+    ):
+        detail = "recovery failure detail omitted by evidence policy"
+    combined = f"{current}; {detail}" if current else detail
+    return combined[:2000]
+
+
+def seconds_between(start: str | None, end: str | None) -> float:
+    if not start or not end:
+        return 0.0
+    left = datetime.fromisoformat(start.replace("Z", "+00:00"))
+    right = datetime.fromisoformat(end.replace("Z", "+00:00"))
+    return (right - left).total_seconds()
+
+
+def run_drill(approval: str, inventory_paths: list[Path], output: Path | None) -> None:
+    contract = _contract()
+    require(
+        approval == contract["approval"] == APPROVAL,
+        "recovery approval differs from the contract",
+    )
+    revision = require_clean_source()
+    stability_result = run_stability_soak(inventory_paths)
+    connection = resolve_connection(inventory_paths)
+    recovery = observer.RecoveryObserver(connection, contract)
+    run_existing_verifiers(inventory_paths)
+    baseline = observer.preflight(recovery)
+    require(
+        require_clean_source() == revision,
+        "recovery source changed during preflight",
+    )
+    operation = operation_id(revision)
+    destination = evidence_path(output, operation)
+    recovery_contract.prepare_evidence_destination(destination)
+    print(
+        f"Grafana recovery operation: {operation}; evidence: {destination}",
+        flush=True,
+    )
+
+    started_at = observer.utc_now()
+    during_endpoints: int | None = None
+    fault_observed_at: str | None = None
+    alert_fired_at: str | None = None
+    restore_started_at: str | None = None
+    recovered_at: str | None = None
+    alert_resolved_at: str | None = None
+    completed_at: str | None = None
+    guard_pid: int | None = None
+    guard_cancelled = False
+    injected = False
+    injection_started = False
+    failure: str | None = None
+    logs: list[dict[str, str]] = []
+    post: dict[str, Any] = {}
+
+    try:
+        guard_pid = start_restore_guard(recovery, operation)
+        injection_started = True
+        inject_fault(recovery, operation)
+        injected = True
+        wait_until(
+            "Grafana endpoints to disappear", lambda: recovery.endpoints() == 0, 60, 2
+        )
+        during_endpoints = 0
+        fault_observed_at = observer.utc_now()
+        wait_until(
+            "Grafana recovery alert to fire",
+            lambda: alert_firing(recovery),
+            int(contract["alert"]["max_fire_seconds"]),
+            5,
+        )
+        alert_fired_at = observer.utc_now()
+    except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001
+        failure = append_failure(failure, error)
+        try:
+            document = recovery.deployment()
+            annotations = document.get("metadata", {}).get("annotations", {})
+            injected = (
+                isinstance(annotations, dict)
+                and annotations.get(observer.ANNOTATION) == operation
+            )
+        except (Exception, KeyboardInterrupt) as readback_error:  # noqa: BLE001
+            injected = injection_started
+            failure = append_failure(
+                failure,
+                f"post-injection readback failed: {_error_text(readback_error)}",
+            )
+    finally:
+        if injected or guard_pid is not None:
+            restore_started_at = observer.utc_now()
+            restore_succeeded = False
+            try:
+                if injected:
+                    restore_fault(recovery, operation)
+                    wait_until(
+                        "Grafana deployment to become healthy",
+                        lambda: healthy(recovery),
+                        300,
+                        5,
+                    )
+                    recovered_at = observer.utc_now()
+                    restore_succeeded = True
+            except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001
+                failure = append_failure(failure, error)
+            finally:
+                if guard_pid is not None and (restore_succeeded or not injected):
+                    guard_cancelled = stop_restore_guard(recovery, guard_pid, operation)
+
+    if recovered_at is not None:
+        try:
+            wait_until(
+                "Grafana recovery alert to resolve",
+                lambda: alert_clear(recovery),
+                int(contract["alert"]["max_resolve_seconds"]),
+                5,
+            )
+            alert_resolved_at = observer.utc_now()
+            logs = recovery.loki_entries(started_at, observer.utc_now())
+            require(bool(logs), "Loki returned no Grafana log entries during the drill")
+            run_existing_verifiers(inventory_paths)
+        except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001
+            failure = append_failure(failure, error)
+
+    try:
+        post = recovery.terminal_snapshot()
+        require(
+            post["replicas"] == contract["target"]["healthy_replicas"],
+            "Grafana is not healthy after the drill",
+        )
+        require(
+            post["available_replicas"] == contract["target"]["healthy_replicas"],
+            "Grafana has no available replica after the drill",
+        )
+        require(post["endpoints"] > 0, "Grafana has no endpoint after the drill")
+        require(post["annotation_absent"], "Grafana recovery annotation remains")
+        require(
+            all(
+                node["ready"] and not node["memory_pressure"] for node in post["nodes"]
+            ),
+            "K3s node health failed after the drill",
+        )
+        require(
+            all(
+                item["ready"] and not item["oom_killed"]
+                for item in post["monitoring"].values()
+            ),
+            "monitoring health failed after the drill",
+        )
+        require(
+            post["monitoring"]["prometheus"]["pod"]
+            == baseline["monitoring"]["prometheus"]["pod"]
+            and post["monitoring"]["prometheus"]["restart_count"]
+            == baseline["monitoring"]["prometheus"]["restart_count"],
+            "Prometheus changed during the drill",
+        )
+        require(
+            post["monitoring"]["grafana"]["restart_count"] == 0,
+            "restored Grafana has restarted",
+        )
+    except (Exception, KeyboardInterrupt) as error:  # noqa: BLE001
+        failure = append_failure(failure, error)
+
+    completed_at = completed_at or observer.utc_now()
+    outage_duration = seconds_between(fault_observed_at, recovered_at)
+    alert_duration = seconds_between(alert_fired_at, alert_resolved_at)
+    if outage_duration > int(contract["limits"]["max_outage_seconds"]):
+        failure = append_failure(failure, "recovery exceeded the outage limit")
+    if guard_pid is not None and not guard_cancelled:
+        failure = append_failure(failure, "restore guard was not cancelled")
+    if recovered_at is None:
+        failure = append_failure(failure, "Grafana recovery was not observed")
+    if alert_resolved_at is None:
+        failure = append_failure(failure, "Grafana recovery alert did not resolve")
+    sample_hash = (
+        hashlib.sha256(logs[0]["line"].encode("utf-8")).hexdigest() if logs else None
+    )
+    evidence = {
+        "schema_version": "1.1",
+        "contract_id": contract["contract_id"],
+        "contract_version": contract["contract_version"],
+        "environment": contract["environment"],
+        "operation_id": operation,
+        "implementation_revision": revision,
+        "target": contract["target"],
+        "started_at": started_at,
+        "fault_observed_at": fault_observed_at,
+        "alert_fired_at": alert_fired_at,
+        "restore_started_at": restore_started_at,
+        "recovered_at": recovered_at,
+        "alert_resolved_at": alert_resolved_at,
+        "completed_at": completed_at,
+        "outage_duration_seconds": outage_duration,
+        "alert_duration_seconds": alert_duration,
+        "stability": stability_result,
+        "baseline": baseline,
+        "observations": {
+            "during": {
+                "endpoints": during_endpoints,
+                "alert_fired": alert_fired_at is not None,
+            },
+            "after": post,
+        },
+        "logs": {
+            "query": contract["logs"]["query"],
+            "entry_count": len(logs),
+            "sample_sha256": sample_hash,
+        },
+        "cleanup": {
+            "annotation_absent": post.get("annotation_absent", False),
+            "guard_cancelled": guard_cancelled,
+            "restore_attempted": restore_started_at is not None,
+        },
+        "result": "pass" if failure is None else "fail",
+        "failure": failure,
+    }
+    recovery_contract.write_evidence(destination, evidence)
+    if evidence["result"] != "pass":
+        raise RecoveryDrillError(
+            f"Grafana recovery drill failed; evidence: {destination}: {failure}"
+        )
+    print(f"Grafana recovery drill passed; evidence: {destination}")
+
+
+def restore(approval: str, inventory_paths: list[Path], operation: str) -> None:
+    contract = _contract()
+    require(
+        approval == contract["approval"] == APPROVAL,
+        "recovery approval differs from the contract",
+    )
+    recovery_contract.validate_operation_id(operation)
+    connection = resolve_connection(inventory_paths)
+    recovery = observer.RecoveryObserver(connection, contract)
+    restore_fault(recovery, operation)
+    wait_until(
+        "Grafana deployment to become healthy", lambda: healthy(recovery), 300, 5
+    )
+    wait_until(
+        "Grafana recovery alert to resolve", lambda: alert_clear(recovery), 300, 5
+    )
+    require(
+        recovery.terminal_snapshot()["annotation_absent"],
+        "Grafana recovery annotation remains after restore",
+    )
+    print("restored and verified Grafana recovery target")
+
+
+def status(inventory_paths: list[Path]) -> None:
+    contract = _contract()
+    connection = resolve_connection(inventory_paths)
+    recovery = observer.RecoveryObserver(connection, contract)
+    document = recovery.deployment()
+    metadata = document.get("metadata")
+    annotations = metadata.get("annotations", {}) if isinstance(metadata, dict) else {}
+    require(isinstance(annotations, dict), "Grafana annotations are invalid")
+    operation = annotations.get(observer.ANNOTATION)
+    if operation is None:
+        print("no Grafana recovery operation is active")
+        return
+    require(isinstance(operation, str), "Grafana recovery operation is invalid")
+    recovery_contract.validate_operation_id(operation)
+    print(f"active Grafana recovery operation: {operation}")
+
+
+def _paths(values: list[str] | None) -> list[Path]:
+    if values:
+        return [Path(value) for value in values]
+    return [
+        REPOSITORY_ROOT / ".local/ansible/inventory.json",
+        REPOSITORY_ROOT / ".local/ansible/connection-inventory.yml",
+    ]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "action",
+        choices=(
+            "rule-preview",
+            "rule-apply",
+            "status",
+            "preflight",
+            "stability-soak",
+            "drill",
+            "restore",
+        ),
+    )
+    parser.add_argument("--approval", default="")
+    parser.add_argument("--operation-id")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--samples", type=int)
+    parser.add_argument("--interval", type=int)
+    parser.add_argument("--inventory", action="append", dest="inventory_paths")
+    args = parser.parse_args()
+    paths = _paths(args.inventory_paths)
+    try:
+        if args.action == "rule-preview":
+            rule_preview(paths)
+        elif args.action == "rule-apply":
+            rule_apply(args.approval, paths)
+        elif args.action == "status":
+            status(paths)
+        elif args.action == "preflight":
+            run_preflight(paths)
+        elif args.action == "stability-soak":
+            run_stability_soak(paths, args.samples, args.interval)
+        elif args.action == "drill":
+            run_drill(args.approval, paths, args.output)
+        else:
+            require(
+                args.operation_id is not None, "--operation-id is required for restore"
+            )
+            restore(args.approval, paths, args.operation_id)
+    except (
+        RecoveryDrillError,
+        observer.RecoveryObservationError,
+        recovery_contract.RecoveryValidationError,
+        transport.TransportError,
+        OSError,
+        ValueError,
+    ) as error:
+        print(f"watch recovery failed: {error}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
