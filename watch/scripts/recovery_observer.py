@@ -265,3 +265,253 @@ class RecoveryObserver:
             limits = resources.get("limits") if isinstance(resources, dict) else None
             memory_limit = limits.get("memory") if isinstance(limits, dict) else None
             oom_killed = any(
+                any(
+                    isinstance(container.get(state_name), dict)
+                    and isinstance(container[state_name].get("terminated"), dict)
+                    and container[state_name]["terminated"].get("reason") == "OOMKilled"
+                    for state_name in ("lastState", "state")
+                )
+                for container in valid
+            )
+            result[role] = {
+                "pod": name,
+                "ready": all(container.get("ready") is True for container in valid),
+                "restart_count": restart_count,
+                "oom_killed": oom_killed,
+                "memory_limit_bytes": _memory_bytes(memory_limit),
+            }
+        return result
+
+    def memory_usage(self) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for role in ("grafana", "prometheus"):
+            selector = self.service_pod_selector(role)
+            output = transport.ssh(
+                connection=self.connection,
+                command=(
+                    f"{kubectl(self.namespace)} top pod -l {shlex.quote(selector)} "
+                    "--no-headers"
+                ),
+                label=f"WATCH {role} memory usage",
+            )
+            rows = [line.split() for line in output.splitlines() if line.strip()]
+            require(
+                len(rows) == 1 and len(rows[0]) >= 3,
+                f"{role} memory usage is ambiguous",
+            )
+            result[role] = {
+                "pod": rows[0][0],
+                "bytes": _memory_bytes(rows[0][2]),
+            }
+        return result
+
+    def alert_state(self) -> dict[str, bool]:
+        alert = self.contract["alert"]
+        name = cast(str, alert["name"])
+        prometheus_selector = self.deployment_selectors["prometheus"]
+        alertmanager_selector = self.deployment_selectors["alertmanager"]
+        rules_raw = verify_monitoring.query_service(
+            self.connection,
+            self.namespace,
+            prometheus_selector,
+            9090,
+            "/api/v1/rules?type=alert",
+        )
+        rules = _json(rules_raw, "Prometheus rules")
+        require(
+            isinstance(rules, dict) and rules.get("status") == "success",
+            "Prometheus rules query failed",
+        )
+        data = rules.get("data")
+        groups = data.get("groups") if isinstance(data, dict) else None
+        require(isinstance(groups, list), "Prometheus rules response is invalid")
+        groups = cast(list[Any], groups)
+        matches: list[dict[str, Any]] = []
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            rule_items = group.get("rules", [])
+            if isinstance(rule_items, list):
+                matches.extend(
+                    cast(dict[str, Any], rule)
+                    for rule in rule_items
+                    if isinstance(rule, dict) and rule.get("name") == name
+                )
+        require(len(matches) == 1, "Grafana recovery rule is missing or duplicated")
+        rule = matches[0]
+        expected_labels = cast(dict[str, str], alert["labels"])
+        loaded = (
+            rule.get("health") == "ok"
+            and rule.get("duration") == alert["hold_seconds"]
+            and rule.get("labels") == expected_labels
+            and isinstance(rule.get("query"), str)
+            and re.sub(r"\s+", "", rule["query"]) == re.sub(r"\s+", "", alert["query"])
+        )
+        encoded = quote(f'ALERTS{{alertname="{name}",alertstate="firing"}}', safe="")
+        firing_raw = verify_monitoring.query_service(
+            self.connection,
+            self.namespace,
+            prometheus_selector,
+            9090,
+            f"/api/v1/query?query={encoded}",
+        )
+        firing_payload = _json(firing_raw, "Prometheus recovery alert")
+        require(
+            isinstance(firing_payload, dict)
+            and firing_payload.get("status") == "success",
+            "Prometheus recovery alert query failed",
+        )
+        firing_data = firing_payload.get("data")
+        require(
+            isinstance(firing_data, dict)
+            and isinstance(firing_data.get("result"), list),
+            "Prometheus recovery alert response is invalid",
+        )
+        firing = bool(firing_data["result"])
+        active_raw = verify_monitoring.query_service(
+            self.connection,
+            self.namespace,
+            alertmanager_selector,
+            9093,
+            "/api/v2/alerts?active=true",
+        )
+        active_payload = _json(active_raw, "Alertmanager alerts")
+        require(
+            isinstance(active_payload, list),
+            "Alertmanager recovery alert response is invalid",
+        )
+        active = any(
+            isinstance(item, dict)
+            and isinstance(item.get("labels"), dict)
+            and item["labels"].get("alertname") == name
+            and all(
+                item["labels"].get(key) == value
+                for key, value in expected_labels.items()
+            )
+            for item in active_payload
+        )
+        return {"loaded": loaded, "firing": firing, "active": active}
+
+    def loki_entries(self, start: str, end: str | None = None) -> list[dict[str, str]]:
+        logs = self.contract["logs"]
+        query = quote(cast(str, logs["query"]), safe="")
+        path = f"/loki/api/v1/query_range?query={query}&limit={logs['max_entries']}&direction=backward"
+        path += f"&start={quote(start, safe='')}"
+        if end is not None:
+            path += f"&end={quote(end, safe='')}"
+        raw = verify_monitoring.query_service(
+            self.connection,
+            self.namespace,
+            self.monitoring_contract["logs"]["loki_service_selector"],
+            self.monitoring_contract["logs"]["loki_service_port"],
+            path,
+        )
+        payload = _json(raw, "Loki recovery logs")
+        data = payload.get("data") if isinstance(payload, dict) else None
+        streams_value = data.get("result") if isinstance(data, dict) else None
+        require(isinstance(streams_value, list), "Loki recovery response is invalid")
+        streams = cast(list[Any], streams_value)
+        result: list[dict[str, str]] = []
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            labels = stream.get("stream", {})
+            values = stream.get("values", [])
+            if not isinstance(labels, dict) or not isinstance(values, list):
+                continue
+            for value in values:
+                if isinstance(value, list) and len(value) >= 2:
+                    result.append({"timestamp": str(value[0]), "line": str(value[1])})
+        return result[: int(logs["max_entries"])]
+
+    def terminal_snapshot(self) -> dict[str, Any]:
+        deployment = self.deployment()
+        metadata = deployment.get("metadata", {})
+        annotations = (
+            metadata.get("annotations", {}) if isinstance(metadata, dict) else {}
+        )
+        status = deployment.get("status", {})
+        spec = deployment.get("spec", {})
+        require(isinstance(annotations, dict), "Grafana annotations are invalid")
+        require(
+            isinstance(status, dict) and isinstance(spec, dict),
+            "Grafana deployment state is invalid",
+        )
+        return {
+            "replicas": spec.get("replicas"),
+            "available_replicas": status.get("availableReplicas", 0),
+            "endpoints": self.endpoints(),
+            "nodes": self.nodes(),
+            "monitoring": self.monitoring_snapshot(),
+            "annotation_absent": ANNOTATION not in annotations,
+        }
+
+
+def _memory_bytes(value: str | None) -> int:
+    if not isinstance(value, str) or not value:
+        raise RecoveryObservationError("memory value is missing")
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([KMG]i|[KMG]|)", value)
+    if match is None:
+        raise RecoveryObservationError(f"memory value is invalid: {value}")
+    amount = float(match.group(1))
+    unit = match.group(2)
+    multiplier = {
+        "": 1,
+        "K": 1000,
+        "M": 1000**2,
+        "G": 1000**3,
+        "Ki": 1024,
+        "Mi": 1024**2,
+        "Gi": 1024**3,
+    }[unit]
+    return int(amount * multiplier)
+
+
+def preflight(observer: RecoveryObserver) -> dict[str, Any]:
+    target = observer.target
+    deployment = observer.deployment()
+    spec = deployment.get("spec", {})
+    status = deployment.get("status", {})
+    require(
+        isinstance(spec, dict) and isinstance(status, dict),
+        "Grafana deployment state is invalid",
+    )
+    require(
+        spec.get("replicas") == target["healthy_replicas"],
+        "Grafana desired replicas are not healthy",
+    )
+    require(
+        status.get("availableReplicas") == target["healthy_replicas"],
+        "Grafana available replicas are not healthy",
+    )
+    require(observer.endpoints() > 0, "Grafana has no Service endpoint")
+    metadata = deployment.get("metadata")
+    require(isinstance(metadata, dict), "Grafana deployment metadata is invalid")
+    metadata = cast(dict[str, Any], metadata)
+    annotations = metadata.get("annotations", {})
+    require(isinstance(annotations, dict), "Grafana annotations are invalid")
+    require(ANNOTATION not in annotations, "another recovery operation is active")
+    nodes = observer.nodes()
+    require(
+        all(node["ready"] and not node["memory_pressure"] for node in nodes),
+        "K3s node preflight failed",
+    )
+    monitoring = observer.monitoring_snapshot()
+    require(
+        all(item["ready"] and not item["oom_killed"] for item in monitoring.values()),
+        "monitoring pod preflight failed",
+    )
+    state = observer.alert_state()
+    require(state["loaded"], "Grafana recovery alert is not loaded")
+    require(
+        not state["firing"] and not state["active"],
+        "Grafana recovery alert is already active",
+    )
+    return {
+        "replicas": spec["replicas"],
+        "available_replicas": status["availableReplicas"],
+        "endpoints": observer.endpoints(),
+        "ready_nodes": len(nodes),
+        "monitoring": monitoring,
+        "alert": state,
+    }
