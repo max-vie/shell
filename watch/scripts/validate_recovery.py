@@ -400,3 +400,364 @@ def validate_terminal(value: Any, contract: dict[str, Any], *, passing: bool) ->
             "terminal nodes are not healthy",
         )
         require(terminal["annotation_absent"], "terminal annotation remains")
+
+
+def validate_evidence(document: dict[str, Any]) -> None:
+    expected = {
+        "schema_version",
+        "contract_id",
+        "contract_version",
+        "environment",
+        "operation_id",
+        "implementation_revision",
+        "target",
+        "started_at",
+        "fault_observed_at",
+        "alert_fired_at",
+        "restore_started_at",
+        "recovered_at",
+        "alert_resolved_at",
+        "completed_at",
+        "outage_duration_seconds",
+        "alert_duration_seconds",
+        "stability",
+        "baseline",
+        "observations",
+        "logs",
+        "cleanup",
+        "result",
+        "failure",
+    }
+    require(set(document) == expected, "recovery evidence shape changed")
+    require(document["schema_version"] == "1.1", "evidence schema changed")
+    require(
+        document["contract_id"] == "grafana-recovery-drill", "evidence contract changed"
+    )
+    require(
+        document["contract_version"] == "1.0.0", "evidence contract version changed"
+    )
+    require(
+        document["environment"] == "environment-gcp", "evidence environment changed"
+    )
+    operation_id = document["operation_id"]
+    require(isinstance(operation_id, str), "evidence operation ID is invalid")
+    validate_operation_id(operation_id)
+    revision = document["implementation_revision"]
+    require(
+        isinstance(revision, str) and bool(re.fullmatch(r"[0-9a-f]{40}", revision)),
+        "evidence revision is invalid",
+    )
+    contract = validate_contract()
+    require(document["target"] == contract["target"], "evidence target changed")
+
+    result = document["result"]
+    require(result in {"pass", "fail"}, "evidence result is invalid")
+    passing = result == "pass"
+
+    ordered = (
+        "started_at",
+        "fault_observed_at",
+        "alert_fired_at",
+        "restore_started_at",
+        "recovered_at",
+        "alert_resolved_at",
+        "completed_at",
+    )
+    timestamps: dict[str, datetime | None] = {}
+    previous: datetime | None = None
+    for label in ordered:
+        current = parse_timestamp(document[label], label)
+        timestamps[label] = current
+        if current is None:
+            continue
+        if previous is not None:
+            require(current >= previous, "evidence timestamps are out of order")
+        previous = current
+    require(timestamps["started_at"] is not None, "evidence lacks a start timestamp")
+
+    outage_duration = document["outage_duration_seconds"]
+    alert_duration = document["alert_duration_seconds"]
+    require(
+        type(outage_duration) in {int, float} and outage_duration >= 0,
+        "outage duration is invalid",
+    )
+    require(
+        type(alert_duration) in {int, float} and alert_duration >= 0,
+        "alert duration is invalid",
+    )
+
+    def derived_seconds(left: str, right: str) -> float:
+        start = timestamps[left]
+        end = timestamps[right]
+        if start is None or end is None:
+            return 0.0
+        return (end - start).total_seconds()
+
+    require(
+        abs(outage_duration - derived_seconds("fault_observed_at", "recovered_at"))
+        < 0.001,
+        "outage duration differs from timestamps",
+    )
+    require(
+        abs(alert_duration - derived_seconds("alert_fired_at", "alert_resolved_at"))
+        < 0.001,
+        "alert duration differs from timestamps",
+    )
+    logs = document["logs"]
+    require(isinstance(logs, dict), "evidence logs are invalid")
+    require(
+        set(logs) == {"query", "entry_count", "sample_sha256"},
+        "evidence logs contain unexpected fields",
+    )
+    require(logs["query"] == contract["logs"]["query"], "evidence log query changed")
+    require(
+        type(logs["entry_count"]) is int and logs["entry_count"] >= 0,
+        "evidence log count is invalid",
+    )
+    require(
+        logs["sample_sha256"] is None
+        or (
+            isinstance(logs["sample_sha256"], str)
+            and bool(SHA256_RE.fullmatch(logs["sample_sha256"]))
+        ),
+        "evidence log sample hash is invalid",
+    )
+    require(
+        logs["entry_count"] <= contract["logs"]["max_entries"],
+        "evidence log count exceeded the contract",
+    )
+
+    stability = object_with_keys(
+        document["stability"],
+        {"started_at", "completed_at", "samples", "interval_seconds", "result"},
+        "evidence stability",
+    )
+    stability_started = parse_timestamp(stability["started_at"], "stability start")
+    stability_completed = parse_timestamp(
+        stability["completed_at"], "stability completion"
+    )
+    require(
+        stability_started is not None and stability_completed is not None,
+        "stability timestamps are invalid",
+    )
+    stability_started = cast(datetime, stability_started)
+    stability_completed = cast(datetime, stability_completed)
+    require(
+        stability_completed >= stability_started,
+        "stability timestamps are invalid",
+    )
+    require(
+        stability_completed <= cast(datetime, timestamps["started_at"]),
+        "stability completed after the drill started",
+    )
+    require(
+        stability["samples"] == contract["stability"]["samples"]
+        and stability["interval_seconds"] == contract["stability"]["interval_seconds"]
+        and stability["result"] == "pass",
+        "stability evidence differs from the contract",
+    )
+    require(
+        (stability_completed - stability_started).total_seconds()
+        >= (stability["samples"] - 1) * stability["interval_seconds"],
+        "stability evidence is shorter than the contract window",
+    )
+
+    validate_baseline(document["baseline"], contract)
+    observations = object_with_keys(
+        document["observations"], {"during", "after"}, "evidence observations"
+    )
+    during = object_with_keys(
+        observations["during"], {"endpoints", "alert_fired"}, "during observation"
+    )
+    require(
+        during["endpoints"] is None or type(during["endpoints"]) is int,
+        "during endpoints are invalid",
+    )
+    require(type(during["alert_fired"]) is bool, "during alert state is invalid")
+    validate_terminal(observations["after"], contract, passing=passing)
+
+    cleanup = object_with_keys(
+        document["cleanup"],
+        {"annotation_absent", "guard_cancelled", "restore_attempted"},
+        "evidence cleanup",
+    )
+    require(
+        all(type(cleanup[key]) is bool for key in cleanup),
+        "evidence cleanup flags are invalid",
+    )
+    require(
+        document["failure"] is None or isinstance(document["failure"], str),
+        "evidence failure is invalid",
+    )
+    if isinstance(document["failure"], str):
+        require(
+            len(document["failure"]) <= 2000 and "\n" not in document["failure"],
+            "evidence failure detail is invalid",
+        )
+        require(
+            not any(
+                forbidden in document["failure"].lower()
+                for forbidden in ("password", "token", "kubeconfig", "private key")
+            ),
+            "evidence failure contains forbidden detail",
+        )
+    if passing:
+        require(
+            all(document[label] is not None for label in ordered),
+            "passing evidence lacks timestamps",
+        )
+        require(document["failure"] is None, "passing evidence contains a failure")
+        require(
+            during == {"endpoints": 0, "alert_fired": True},
+            "passing outage observation is incomplete",
+        )
+        baseline = cast(dict[str, Any], document["baseline"])
+        baseline_monitoring = cast(dict[str, Any], baseline["monitoring"])
+        terminal = cast(dict[str, Any], observations["after"])
+        terminal_monitoring = cast(dict[str, Any], terminal["monitoring"])
+        require(
+            terminal_monitoring["prometheus"]["pod"]
+            == baseline_monitoring["prometheus"]["pod"]
+            and terminal_monitoring["prometheus"]["restart_count"]
+            == baseline_monitoring["prometheus"]["restart_count"],
+            "passing Prometheus observation changed during the drill",
+        )
+        require(
+            terminal_monitoring["grafana"]["restart_count"] == 0,
+            "passing Grafana observation contains a restart",
+        )
+        require(
+            cleanup
+            == {
+                "annotation_absent": True,
+                "guard_cancelled": True,
+                "restore_attempted": True,
+            },
+            "passing evidence cleanup is incomplete",
+        )
+        require(
+            logs["entry_count"] > 0 and logs["sample_sha256"] is not None,
+            "passing evidence lacks log proof",
+        )
+        fire_delay = derived_seconds("fault_observed_at", "alert_fired_at")
+        resolve_delay = derived_seconds("recovered_at", "alert_resolved_at")
+        require(
+            0 <= fire_delay <= contract["alert"]["max_fire_seconds"],
+            "passing alert fire timing is invalid",
+        )
+        require(
+            resolve_delay <= contract["alert"]["max_resolve_seconds"],
+            "passing alert resolve timing is invalid",
+        )
+        require(
+            outage_duration <= contract["limits"]["max_outage_seconds"],
+            "passing outage exceeded the contract limit",
+        )
+    else:
+        require(
+            document["started_at"] is not None,
+            "failed evidence lacks a start timestamp",
+        )
+        require(
+            document["completed_at"] is not None,
+            "failed evidence lacks a completion timestamp",
+        )
+        require(
+            isinstance(document["failure"], str) and bool(document["failure"].strip()),
+            "failed evidence lacks a failure",
+        )
+
+
+def prepare_evidence_destination(path: Path) -> Path:
+    destination = Path(os.path.abspath(path))
+    require(
+        not destination.exists() and not destination.is_symlink(),
+        "evidence output already exists",
+    )
+    evidence_root = Path(os.path.abspath(EVIDENCE_ROOT)).resolve()
+    if evidence_root in destination.parents:
+        require(
+            destination.parent == evidence_root,
+            "evidence output must be a direct child of the evidence directory",
+        )
+    parent = destination.parent
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    require(parent.is_dir() and not parent.is_symlink(), "evidence directory is unsafe")
+    require(
+        stat.S_IMODE(parent.stat().st_mode) == 0o700,
+        "evidence directory must be mode 0700",
+    )
+    if destination.parent == evidence_root:
+        current = parent
+        while current != REPOSITORY_ROOT:
+            require(
+                current.is_dir() and not current.is_symlink(),
+                "evidence directory is unsafe",
+            )
+            require(
+                stat.S_IMODE(current.stat().st_mode) == 0o700,
+                "private evidence parent must be mode 0700",
+            )
+            current = current.parent
+    return destination
+
+
+def write_evidence(path: Path, document: dict[str, Any]) -> None:
+    validate_evidence(document)
+    destination = prepare_evidence_destination(path)
+    parent = destination.parent
+    descriptor: int | None = None
+    temporary_path: Path | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.", dir=parent
+        )
+        temporary_path = Path(temporary_name)
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = None
+            json.dump(document, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary_path, destination, follow_symlinks=False)
+        temporary_path.unlink()
+        temporary_path = None
+        directory = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except FileExistsError as error:
+        raise RecoveryValidationError("evidence output already exists") from error
+    except OSError as error:
+        raise RecoveryValidationError("evidence output could not be written") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def validate(evidence: Path | None = None) -> None:
+    validate_contract()
+    validate_rule()
+    if evidence is not None:
+        validate_evidence(read_json(evidence, "recovery evidence"))
+    print("validated Grafana recovery contract, rule, and evidence shape")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--evidence", type=Path)
+    args = parser.parse_args()
+    try:
+        validate(args.evidence)
+    except (RecoveryValidationError, OSError) as error:
+        print(f"recovery validation failed: {error}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
