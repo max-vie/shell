@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "grafana-recovery-drill",
+  "description": "Source policy for a bounded GCP Grafana recovery drill.",
+  "policy_owner": "watch",
+  "execution_owner": "make",
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "cluster": {
+    "name": "gcp",
+    "nodes": ["gcp-k3s-01", "gcp-k3s-02", "gcp-k3s-03"]
+  },
+  "approval": "environment-gcp/watch/grafana-unavailable",
+  "target": {
+    "kind": "Deployment",
+    "namespace": "monitoring",
+    "name": "shell-watch-grafana",
+    "healthy_replicas": 1,
+    "annotation": "shell.internal/recovery-drill"
+  },
+  "alert": {
+    "name": "ShellWatchGrafanaUnavailable",
+    "query": "kube_deployment_status_replicas_available{namespace=\"monitoring\",deployment=\"shell-watch-grafana\"} < 1",
+    "hold_seconds": 60,
+    "labels": {
+      "owner": "watch",
+      "drill": "grafana-unavailability",
+      "severity": "warning"
+    }
+  },
+  "stability": {"samples": 20, "interval_seconds": 30},
+  "limits": {"max_outage_seconds": 300}
+}

@@ -5,11 +5,12 @@ WATCH_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 REPOSITORY_ROOT := $(abspath $(WATCH_ROOT)/..)
 CONTRACT_VALIDATOR := $(WATCH_ROOT)/scripts/validate_monitoring_contract.py
 SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_watch.py
+RECOVERY_VALIDATOR := $(WATCH_ROOT)/scripts/validate_recovery.py
 VERIFY_SCRIPT := $(WATCH_ROOT)/scripts/verify_monitoring.py
 INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
 CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
 
-.PHONY: check test check-logs verify verify-logs
+.PHONY: check test check-logs check-recovery verify verify-logs
 
 check: test
 
@@ -22,6 +23,10 @@ check-logs:
 	$(PYTHON) $(CONTRACT_VALIDATOR)
 	$(PYTHON) $(REPOSITORY_ROOT)/tar/scripts/validate_watch_logs.py
 	$(PYTHON) -m unittest $(WATCH_ROOT)/tests/test_logs.py
+
+check-recovery:
+	$(PYTHON) $(RECOVERY_VALIDATOR)
+	$(PYTHON) -m unittest $(WATCH_ROOT)/tests/test_recovery_contract.py
 
 # Read-only live verification for metrics and Grafana through the fixed first
 # GCP K3s server.

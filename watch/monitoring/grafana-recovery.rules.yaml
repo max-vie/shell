@@ -1,0 +1,26 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shell-watch-grafana-recovery
+  namespace: monitoring
+  labels:
+    release: shell-watch
+    shell.platform/owner: watch
+    owner: watch
+    drill: grafana-unavailability
+spec:
+  groups:
+    - name: shell-watch-recovery
+      rules:
+        - alert: ShellWatchGrafanaUnavailable
+          expr: >-
+            kube_deployment_status_replicas_available{
+              namespace="monitoring",
+              deployment="shell-watch-grafana"
+            } < 1
+          for: 60s
+          labels:
+            owner: watch
+            drill: grafana-unavailability
+            severity: warning
