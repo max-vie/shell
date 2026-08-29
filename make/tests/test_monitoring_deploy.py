@@ -59,6 +59,40 @@ class TestMonitoringDeploy(unittest.TestCase):
                 self.assertNotIn("openbao", source.lower())
                 self.assertNotIn("password:", source.lower())
 
+    def test_monitoring_values_keep_recovery_headroom(self) -> None:
+        deploy.validate_stability_values(MAKE_ROOT / "monitoring/values.yaml")
+
+    def test_monitoring_stability_values_are_component_specific(self) -> None:
+        source = (MAKE_ROOT / "monitoring/values.yaml").read_text(encoding="utf-8")
+        altered = source.replace("memory: 1280Mi", "memory: 1Gi")
+        with tempfile.TemporaryDirectory() as temporary:
+            values = Path(temporary) / "values.yaml"
+            values.write_text(
+                altered + "\nother:\n  memory: 1280Mi\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                deploy.MonitoringDeployError, "stability values changed"
+            ):
+                deploy.validate_stability_values(values)
+
+    def test_monitoring_stability_keeps_default_alert_rules(self) -> None:
+        source = (MAKE_ROOT / "monitoring/values.yaml").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as temporary:
+            values = Path(temporary) / "values.yaml"
+            for override in (
+                "defaultRules:\n  create: false\n",
+                "defaultRules:\n  rules:\n    general: false\n",
+                "defaultRules:\n  disabled:\n    Watchdog: true\n",
+                "defaultRules: {rules: {general: false}}\n",
+                "defaultRules:\n  disabled: {Watchdog: true}\n",
+            ):
+                with self.subTest(override=override):
+                    values.write_text(override + source, encoding="utf-8")
+                    with self.assertRaisesRegex(
+                        deploy.MonitoringDeployError, "default alert rules"
+                    ):
+                        deploy.validate_stability_values(values)
+
     def test_check_only_stops_before_inventory_or_chart_access(self) -> None:
         with (
             mock.patch.object(deploy.transport, "resolve_connection") as resolve,

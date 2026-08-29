@@ -56,7 +56,85 @@ def validate_source() -> tuple[dict[str, Any], dict[str, Any]]:
         IMAGE_VALIDATOR.is_file() and not IMAGE_VALIDATOR.is_symlink(),
         "MAKE monitoring image validator is missing",
     )
+    validate_stability_values(values)
     return monitoring_contract, supply_lock
+
+
+def validate_stability_values(values: Path) -> None:
+    try:
+        source = values.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise MonitoringDeployError("MAKE monitoring values cannot be read") from error
+
+    expected = {
+        ("grafana", "resources", "requests", "memory"): "256Mi",
+        ("grafana", "resources", "limits", "memory"): "1Gi",
+        (
+            "prometheus",
+            "prometheusSpec",
+            "resources",
+            "requests",
+            "memory",
+        ): "512Mi",
+        (
+            "prometheus",
+            "prometheusSpec",
+            "resources",
+            "limits",
+            "memory",
+        ): "1280Mi",
+    }
+    found: dict[tuple[str, ...], str] = {}
+    parents: list[tuple[int, str]] = []
+    pattern = re.compile(
+        r"^(?P<indent> *)(?P<key>[A-Za-z0-9_-]+):(?:[ ]+(?P<value>[^#]+?))?[ ]*$"
+    )
+    for line in source.splitlines():
+        match = pattern.fullmatch(line)
+        if match is None:
+            continue
+        indent = len(match.group("indent"))
+        while parents and parents[-1][0] >= indent:
+            parents.pop()
+        key = match.group("key")
+        path = (*[parent[1] for parent in parents], key)
+        value = match.group("value")
+        if value is None:
+            parents.append((indent, key))
+        elif path and path[0] == "defaultRules":
+            lowered = value.lower()
+            disables_defaults = path == ("defaultRules", "create") and lowered == "false"
+            disables_general = (
+                path == ("defaultRules", "rules", "general") and lowered == "false"
+            )
+            disables_watchdog = (
+                path == ("defaultRules", "disabled", "Watchdog") and lowered == "true"
+            )
+            flow_override = any(
+                re.search(pattern, value, re.IGNORECASE) is not None
+                for pattern in (
+                    r"\bcreate\s*:\s*false\b",
+                    r"\bgeneral\s*:\s*false\b",
+                    r"\bWatchdog\s*:\s*true\b",
+                )
+            )
+            require(
+                not (
+                    disables_defaults
+                    or disables_general
+                    or disables_watchdog
+                    or flow_override
+                ),
+                "MAKE monitoring default alert rules must stay enabled",
+            )
+        elif path in expected:
+            require(
+                path not in found,
+                f"MAKE monitoring value is duplicated: {'.'.join(path)}",
+            )
+            found[path] = value.strip()
+
+    require(found == expected, "MAKE monitoring stability values changed")
 
 
 def require_staged_chart(supply_lock: dict[str, Any]) -> Path:

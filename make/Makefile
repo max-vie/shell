@@ -32,6 +32,10 @@ MONITORING_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
 MONITORING_CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
 LOGS_DEPLOY_SCRIPT := $(MAKE_ROOT)/scripts/deploy_logs.py
 LOGS_APPROVAL := environment-gcp/make/logs
+WATCH_RECOVERY_SCRIPT := $(MAKE_ROOT)/scripts/watch_recovery.py
+WATCH_RECOVERY_APPROVAL := environment-gcp/watch/grafana-unavailable
+WATCH_RECOVERY_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
+WATCH_RECOVERY_CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
 
 TRUST_VALIDATOR := $(MAKE_ROOT)/scripts/validate_cluster_trust.py
 INTERMEDIATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_cluster_intermediate.py
@@ -39,7 +43,7 @@ CERTIFICATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_consumer_certificate.py
 SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_kubernetes_supply.py
 TRUST_VALUES := $(MAKE_ROOT)/cert-manager/values.yaml
 
-.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply logs-check logs-preview logs-apply
+.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply logs-check logs-preview logs-apply watch-recovery-check watch-recovery-rule-preview watch-recovery-rule-apply watch-recovery-drill watch-recovery-restore
 
 check: test trust-preview repository-check monitoring-check logs-check
 
@@ -197,3 +201,38 @@ logs-apply:
 		--inventory "$(MONITORING_INVENTORY)" \
 		--inventory "$(MONITORING_CONNECTION_INVENTORY)" \
 		--approval "$(APPROVAL)"
+
+# Recovery policy is validated locally; live mutation remains MAKE-owned and
+# requires its exact WATCH approval.
+watch-recovery-check:
+	$(PYTHON) "$(REPOSITORY_ROOT)/watch/scripts/validate_recovery.py"
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_watch_recovery.py"
+
+watch-recovery-rule-preview:
+	$(PYTHON) "$(WATCH_RECOVERY_SCRIPT)" rule-preview \
+		--inventory "$(WATCH_RECOVERY_INVENTORY)" \
+		--inventory "$(WATCH_RECOVERY_CONNECTION_INVENTORY)"
+
+watch-recovery-rule-apply:
+	@test "$(APPROVAL)" = "$(WATCH_RECOVERY_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/watch/grafana-unavailable' >&2; exit 2; }
+	$(PYTHON) "$(WATCH_RECOVERY_SCRIPT)" rule-apply \
+		--approval "$(APPROVAL)" \
+		--inventory "$(WATCH_RECOVERY_INVENTORY)" \
+		--inventory "$(WATCH_RECOVERY_CONNECTION_INVENTORY)"
+
+watch-recovery-drill:
+	@test "$(APPROVAL)" = "$(WATCH_RECOVERY_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/watch/grafana-unavailable' >&2; exit 2; }
+	$(PYTHON) "$(WATCH_RECOVERY_SCRIPT)" drill \
+		--approval "$(APPROVAL)" \
+		--inventory "$(WATCH_RECOVERY_INVENTORY)" \
+		--inventory "$(WATCH_RECOVERY_CONNECTION_INVENTORY)" \
+		$(if $(OUTPUT),--output "$(OUTPUT)",)
+
+watch-recovery-restore:
+	@test "$(APPROVAL)" = "$(WATCH_RECOVERY_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/watch/grafana-unavailable' >&2; exit 2; }
+	@test -n "$(OPERATION_ID)" || { printf '%s\n' 'OPERATION_ID is required' >&2; exit 2; }
+	$(PYTHON) "$(WATCH_RECOVERY_SCRIPT)" restore \
+		--approval "$(APPROVAL)" \
+		--operation-id "$(OPERATION_ID)" \
+		--inventory "$(WATCH_RECOVERY_INVENTORY)" \
+		--inventory "$(WATCH_RECOVERY_CONNECTION_INVENTORY)"
