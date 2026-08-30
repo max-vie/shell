@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: shell-root-ca
+  namespace: shell-artifacts
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+    shell.platform/owner: sudo
+type: Opaque
+stringData:
+  ca.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIByDCCAW6gAwIBAgIUbRMFOhqRRGabEQE2CkhTLzkqqGMwCgYIKoZIzj0EAwIw
+    MDEOMAwGA1UECgwFU0hFTEwxHjAcBgNVBAMMFVNIRUxMIE9mZmxpbmUgUm9vdCBD
+    QTAeFw0yNjA4MjAwNzQ1MzdaFw0zNjA4MTcwNzQ1MzdaMDAxDjAMBgNVBAoMBVNI
+    RUxMMR4wHAYDVQQDDBVTSEVMTCBPZmZsaW5lIFJvb3QgQ0EwWTATBgcqhkjOPQIB
+    BggqhkjOPQMBBwNCAAQnynxwrmPKXu3qQyNqqm2Zha/0xZtQIgGpyoCji9F1c7ng
+    h/udearmg7X8irt9/x2Jr14cAOGgIrwiUluG7sDEo2YwZDAfBgNVHSMEGDAWgBRj
+    fzSSqrWDRzrjgJbucYS/nMRFezASBgNVHRMBAf8ECDAGAQH/AgEBMA4GA1UdDwEB
+    /wQEAwIBBjAdBgNVHQ4EFgQUY380kqq1g0c644CW7nGEv5zERXswCgYIKoZIzj0E
+    AwIDSAAwRQIhALSRkeg3L1h7Lal7L6jckg47GqlBB6jlUFUPqvrSQ4oeAiBJkPpw
+    nn71mMbj1vcsjUUf0vQS8LhHoSNHXFqd4Gqt+g==
+    -----END CERTIFICATE-----
