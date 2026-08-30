@@ -32,6 +32,24 @@ MONITORING_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
 MONITORING_CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
 LOGS_DEPLOY_SCRIPT := $(MAKE_ROOT)/scripts/deploy_logs.py
 LOGS_APPROVAL := environment-gcp/make/logs
+PLATFORM_SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_platform_supply.py
+HARBOR_SCRIPT := $(MAKE_ROOT)/scripts/deploy_harbor.py
+HARBOR_ROBOTS_SCRIPT := $(MAKE_ROOT)/scripts/register_harbor_robots.py
+HARBOR_APPROVAL := environment-gcp/make/harbor
+HARBOR_ROBOTS_APPROVAL := environment-gcp/make/harbor-robots
+HARBOR_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
+HARBOR_CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
+ARGOCD_SCRIPT := $(MAKE_ROOT)/scripts/deploy_argocd.py
+ARGOCD_APPROVAL := environment-gcp/make/argocd
+ARGOCD_ROOT_APPROVAL := environment-gcp/make/argocd-root
+ARGOCD_REPOSITORY_SCRIPT := $(MAKE_ROOT)/scripts/register_argocd_repository.py
+ARGOCD_REPOSITORY_APPROVAL := environment-gcp/make/argocd-repository
+OPENBAO_VALIDATOR := $(MAKE_ROOT)/scripts/validate_openbao.py
+OPENBAO_BOOTSTRAP_SCRIPT := $(MAKE_ROOT)/scripts/bootstrap_openbao.py
+OPENBAO_CA_FILE ?= $(REPOSITORY_ROOT)/sudo/pki/shell-offline-root.crt.pem
+RELEASE_FEED_SCRIPT := $(MAKE_ROOT)/scripts/deploy_release_feed.py
+RELEASE_FEED_APPROVAL := environment-gcp/make/release-feed
+RELEASE_FEED_TAR_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_release_feed.py
 WATCH_RECOVERY_SCRIPT := $(MAKE_ROOT)/scripts/watch_recovery.py
 WATCH_RECOVERY_APPROVAL := environment-gcp/watch/grafana-unavailable
 WATCH_RECOVERY_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
@@ -43,12 +61,13 @@ CERTIFICATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_consumer_certificate.py
 SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_kubernetes_supply.py
 TRUST_VALUES := $(MAKE_ROOT)/cert-manager/values.yaml
 
-.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply logs-check logs-preview logs-apply watch-recovery-check watch-recovery-rule-preview watch-recovery-rule-apply watch-recovery-drill watch-recovery-restore
+.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply logs-check logs-preview logs-apply platform-check harbor-check harbor-preview harbor-apply harbor-robots-check harbor-robots-apply argocd-check argocd-preview argocd-apply argocd-root-apply argocd-verify argocd-repository-check argocd-repository-apply openbao-check openbao-preview openbao-bootstrap release-feed-check release-feed-preview release-feed-apply release-feed-verify watch-recovery-check watch-recovery-rule-preview watch-recovery-rule-apply watch-recovery-drill watch-recovery-restore
 
-check: test trust-preview repository-check monitoring-check logs-check
+check: test trust-preview repository-check monitoring-check logs-check platform-check harbor-check argocd-check openbao-check release-feed-check
 
 test:
 	$(PYTHON) -m unittest discover -s $(MAKE_ROOT)/tests -p 'test_*.py'
+	$(PYTHON) -m unittest discover -s $(MAKE_ROOT)/apps/release-feed/tests -p 'test_*.py'
 
 # Contract validation is offline and checks both clusters.
 trust-preview:
@@ -201,6 +220,89 @@ logs-apply:
 		--inventory "$(MONITORING_INVENTORY)" \
 		--inventory "$(MONITORING_CONNECTION_INVENTORY)" \
 		--approval "$(APPROVAL)"
+
+platform-check:
+	$(PYTHON) "$(PLATFORM_SUPPLY_VALIDATOR)"
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_harbor_robots.py"
+
+harbor-check: platform-check
+	$(PYTHON) "$(MAKE_ROOT)/scripts/validate_harbor_robots.py"
+	$(PYTHON) "$(HARBOR_SCRIPT)" check
+
+harbor-preview: harbor-check
+	$(PYTHON) "$(HARBOR_SCRIPT)" check
+
+harbor-apply:
+	@printf '%s\n' 'Harbor apply is blocked: GCP service routing and SUDO signing-key custody are unresolved' >&2
+	@exit 2
+
+harbor-robots-check:
+	$(PYTHON) "$(HARBOR_ROBOTS_SCRIPT)" --check-only --approval source-only
+
+harbor-robots-apply:
+	@printf '%s\n' 'Harbor robot registration is blocked: durable replacement and custody publication are unresolved' >&2
+	@exit 2
+
+argocd-check: argocd-repository-check
+	$(PYTHON) "$(MAKE_ROOT)/scripts/validate_argocd.py"
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_argocd_source.py"
+
+argocd-preview: argocd-check
+	$(PYTHON) "$(ARGOCD_SCRIPT)" check
+
+argocd-apply:
+	@printf '%s\n' 'Argo CD apply is blocked: runtime image pins and GitOps source publication are unresolved' >&2
+	@exit 2
+
+argocd-root-apply:
+	@printf '%s\n' 'Argo CD root apply is blocked until the reviewed GitOps revision is published' >&2
+	@exit 2
+
+argocd-verify:
+	$(PYTHON) "$(ARGOCD_SCRIPT)" verify \
+		--inventory "$(HARBOR_INVENTORY)" \
+		--inventory "$(HARBOR_CONNECTION_INVENTORY)"
+
+argocd-repository-check:
+	$(PYTHON) "$(ARGOCD_REPOSITORY_SCRIPT)" --check-only --approval source-only
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_argocd_repository.py"
+
+argocd-repository-apply:
+	@printf '%s\n' 'Argo CD repository apply is blocked until GitOps publication is implemented' >&2
+	@exit 2
+
+openbao-check:
+	$(PYTHON) "$(OPENBAO_VALIDATOR)"
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_openbao_source.py" "$(MAKE_ROOT)/tests/test_openbao_bootstrap.py"
+
+openbao-preview: openbao-check
+	$(PYTHON) "$(OPENBAO_BOOTSTRAP_SCRIPT)" \
+		--check-only \
+		--approval source-only \
+		--url https://openbao-active.openbao.svc.cluster.local:8200 \
+		--ca-file "$(REPOSITORY_ROOT)/sudo/pki/shell-offline-root.crt.pem"
+
+openbao-bootstrap:
+	@printf '%s\n' 'OpenBao bootstrap is blocked: K3s API trust, HA join, and split custody are unresolved' >&2
+	@exit 2
+
+release-feed-check:
+	$(PYTHON) "$(RELEASE_FEED_TAR_VALIDATOR)"
+	$(PYTHON) "$(RELEASE_FEED_SCRIPT)" check
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_release_feed_deploy.py"
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/apps/release-feed/tests/test_app.py"
+
+release-feed-preview: release-feed-check
+	$(PYTHON) "$(RELEASE_FEED_SCRIPT)" check
+
+release-feed-apply:
+	@printf '%s\n' 'release-feed apply is blocked: GCP routing and TAR promotion are unresolved' >&2
+	@exit 2
+
+release-feed-verify:
+	$(PYTHON) "$(REPOSITORY_ROOT)/watch/scripts/verify_release_feed.py" \
+		--inventory "$(HARBOR_INVENTORY)" \
+		--inventory "$(HARBOR_CONNECTION_INVENTORY)"
 
 # Recovery policy is validated locally; live mutation remains MAKE-owned and
 # requires its exact WATCH approval.
