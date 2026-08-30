@@ -155,6 +155,22 @@ prometheus:
       limits:
         cpu: 500m
         memory: 1280Mi
+    serviceMonitorSelector:
+      matchLabels:
+        release: shell-watch
+    serviceMonitorNamespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - monitoring
+            - release-feed
+    ruleSelector:
+      matchLabels:
+        release: shell-watch
+    ruleNamespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
 
 alertmanager:
   alertmanagerSpec:

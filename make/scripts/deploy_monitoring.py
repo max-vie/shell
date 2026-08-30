@@ -135,6 +135,12 @@ def validate_stability_values(values: Path) -> None:
             found[path] = value.strip()
 
     require(found == expected, "MAKE monitoring stability values changed")
+    for fragment in (
+        "serviceMonitorNamespaceSelector:\n      matchExpressions:",
+        "operator: In\n          values:\n            - monitoring\n            - release-feed",
+        "ruleNamespaceSelector:\n      matchLabels:\n        kubernetes.io/metadata.name: monitoring",
+    ):
+        require(fragment in source, "MAKE monitoring namespace discovery changed")
 
 
 def require_staged_chart(supply_lock: dict[str, Any]) -> Path:

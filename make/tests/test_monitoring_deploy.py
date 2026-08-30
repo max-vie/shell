@@ -62,6 +62,13 @@ class TestMonitoringDeploy(unittest.TestCase):
     def test_monitoring_values_keep_recovery_headroom(self) -> None:
         deploy.validate_stability_values(MAKE_ROOT / "monitoring/values.yaml")
 
+    def test_monitoring_discovery_is_namespace_bounded(self) -> None:
+        source = (MAKE_ROOT / "monitoring/values.yaml").read_text(encoding="utf-8")
+        self.assertIn("- release-feed", source)
+        self.assertIn("kubernetes.io/metadata.name: monitoring", source)
+        self.assertNotIn("serviceMonitorNamespaceSelector: {}", source)
+        self.assertNotIn("ruleNamespaceSelector: {}", source)
+
     def test_monitoring_stability_values_are_component_specific(self) -> None:
         source = (MAKE_ROOT / "monitoring/values.yaml").read_text(encoding="utf-8")
         altered = source.replace("memory: 1280Mi", "memory: 1Gi")
