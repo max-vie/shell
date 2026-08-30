@@ -1,0 +1,18 @@
+FROM cgr.dev/chainguard/python@sha256:d812438658b47b73cb4c089f4cca09bca1ba50f6cd1843133864ee074d9ec49b
+
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION} \
+    DATABASE_PATH=/data/releases.db \
+    READ_TOKEN_PATH=/run/secrets/read-token \
+    WRITE_TOKEN_PATH=/run/secrets/write-token \
+    TLS_CERT_PATH=/tls/tls.crt \
+    TLS_KEY_PATH=/tls/tls.key \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+LABEL org.opencontainers.image.title="SHELL release feed" \
+      org.opencontainers.image.version="${APP_VERSION}"
+WORKDIR /app
+COPY --chown=65532:65532 --chmod=0444 app.py .
+USER 65532:65532
+EXPOSE 8443
+ENTRYPOINT ["/usr/bin/python", "/app/app.py"]
