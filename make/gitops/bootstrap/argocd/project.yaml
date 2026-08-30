@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: shell-platform-services
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+spec:
+  description: SHELL platform services managed by the first GitOps slice
+  sourceRepos:
+    - https://forgejo.shell.internal/shell/make.git
+    - registry.shell.internal/shell/charts
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+    - server: https://kubernetes.default.svc
+      namespace: openbao
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: cert-manager.io
+      kind: Certificate
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

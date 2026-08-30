@@ -1,0 +1,71 @@
+configs:
+  cm:
+    url: https://argocd-server.argocd.svc.cluster.local
+    admin.enabled: "false"
+    exec.enabled: "false"
+    statusbadge.enabled: "false"
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      p, role:operator, applications, get, shell-platform-services/*, allow
+      p, role:operator, applications, sync, shell-platform-services/*, allow
+      p, role:operator, applications, action/*, shell-platform-services/*, deny
+      p, role:operator, exec, create, */*, deny
+  params:
+    server.insecure: "false"
+    applicationsetcontroller.enable.scm.providers: "false"
+global:
+  imagePullSecrets:
+    - name: shell-registry-pull
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+server:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  service:
+    type: ClusterIP
+repoServer:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+applicationSet:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+dex:
+  enabled: false
+notifications:
+  enabled: false
+redis-ha:
+  enabled: false

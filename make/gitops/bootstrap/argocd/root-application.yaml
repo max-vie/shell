@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shell-platform-root
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+spec:
+  project: shell-platform-services
+  source:
+    repoURL: https://forgejo.shell.internal/shell/make.git
+    targetRevision: main
+    path: gitops/applications/children
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
