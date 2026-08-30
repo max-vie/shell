@@ -1,0 +1,41 @@
+{
+  "description": "MAKE requirements for Harbor robot credentials consumed by workloads.",
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "harbor-robot-handoff",
+  "policy_owner": "sudo",
+  "producer_owner": "make",
+  "consumer_owners": ["make", "tar"],
+  "environment": "environment-gcp",
+  "endpoint": {
+    "hostname": "registry.shell.internal",
+    "address": "10.77.0.221",
+    "transport": "https"
+  },
+  "private_handoff": {
+    "path": ".local/sudo/release-feed/harbor-robots.sops.json",
+    "storage": "sops-age",
+    "directory_mode": "0700",
+    "file_mode": "0600",
+    "plaintext_values_tracked": false
+  },
+  "robots": {
+    "publisher": {
+      "project": "shell",
+      "permissions": [
+        "pull",
+        "push"
+      ]
+    },
+    "puller": {
+      "project": "shell",
+      "permissions": [
+        "pull"
+      ]
+    }
+  },
+  "kubernetes_secrets": {
+    "release-feed": "release-feed-pull",
+    "platform": "shell-registry-pull"
+  }
+}
