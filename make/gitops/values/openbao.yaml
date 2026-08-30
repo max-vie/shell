@@ -1,0 +1,125 @@
+# OpenBao is reconciled by Argo CD after the local bootstrap prerequisites
+# exist. The service remains in-cluster; release-feed uses Kubernetes auth.
+global:
+  enabled: true
+  tlsDisable: false
+  imagePullSecrets:
+    - name: shell-registry-pull
+
+injector:
+  enabled: false
+
+csi:
+  enabled: false
+
+server:
+  enabled: true
+  image:
+    registry: registry.shell.internal
+    repository: shell/system/openbao
+    tag: 2.6.1@sha256:5b2486ab0fb90bbc788cc345b0a08616dfb375873ee8be5df3a2fd4d378a67e0
+    pullPolicy: IfNotPresent
+  logLevel: info
+  logFormat: json
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  authDelegator:
+    enabled: true
+  serviceAccount:
+    serviceDiscovery:
+      enabled: true
+  statefulSet:
+    securityContext:
+      pod:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      container:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+  service:
+    type: ClusterIP
+    active:
+      enabled: true
+    standby:
+      enabled: true
+    headless: {}
+  extraEnvironmentVars:
+    BAO_CACERT: /openbao/tls/ca.crt
+  volumes:
+    - name: server-tls
+      secret:
+        secretName: openbao-server-tls
+        defaultMode: 0440
+  volumeMounts:
+    - name: server-tls
+      mountPath: /openbao/tls
+      readOnly: true
+  readinessProbe:
+    enabled: true
+    path: /v1/sys/health?standbyok=true
+  livenessProbe:
+    enabled: true
+    path: /v1/sys/health?standbyok=true
+    initialDelaySeconds: 60
+    periodSeconds: 20
+  dataStorage:
+    enabled: true
+    size: 2Gi
+    storageClass: longhorn
+    accessMode: ReadWriteOnce
+  auditStorage:
+    enabled: true
+    size: 1Gi
+    storageClass: longhorn
+    accessMode: ReadWriteOnce
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = false
+
+        listener "tcp" {
+          address = "[::]:8200"
+          cluster_address = "[::]:8201"
+          tls_disable = 0
+          tls_cert_file = "/openbao/tls/tls.crt"
+          tls_key_file = "/openbao/tls/tls.key"
+        }
+
+        storage "raft" {
+          path = "/openbao/data"
+        }
+
+        service_registration "kubernetes" {}
+
+        telemetry {
+          prometheus_retention_time = "30s"
+          disable_hostname = true
+        }
+    disruptionBudget:
+      enabled: true
+      maxUnavailable: 1
+
+ui:
+  enabled: false
+
+serverTelemetry:
+  serviceMonitor:
+    enabled: false

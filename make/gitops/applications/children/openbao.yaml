@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shell-openbao
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "30"
+spec:
+  project: shell-platform-services
+  sources:
+    - repoURL: registry.shell.internal/shell/charts
+      chart: openbao
+      targetRevision: 0.28.6
+      helm:
+        releaseName: openbao
+        valueFiles:
+          - $values/gitops/values/openbao.yaml
+    - repoURL: https://forgejo.shell.internal/shell/make.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://forgejo.shell.internal/shell/make.git
+      targetRevision: main
+      path: gitops/platform/openbao
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openbao
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
