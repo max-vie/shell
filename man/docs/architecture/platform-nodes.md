@@ -1,8 +1,8 @@
 # SHELL platform nodes
 
-The new SHELL implementation defines two independent K3s variants and two
-shared platform nodes. This page lists the intended nodes and their placement.
-Service endpoints and workload placement are outside its scope.
+SHELL defines two independent K3s variants and two shared platform nodes.
+This page lists their intended placement and separates assigned node addresses
+from proposed workload addresses.
 
 ## Topology
 
@@ -25,6 +25,23 @@ environment; no separate Proxmox copies are planned.
 | --- | --- | --- |
 | `identity-01` | `10.77.0.210` | FreeIPA identity and internal DNS |
 | `delivery-01` | `10.77.0.211` | Forgejo and rootless runner |
+
+## Proposed GCP service endpoints
+
+The release-feed decision proposes two addresses next to the assigned
+Proxmox host address. `[OPEN]` means the source names the address but no GCP
+reservation or routing implementation exists.
+
+| Address | Lifecycle owner | Intended use | Status |
+| --- | --- | --- | --- |
+| `10.77.0.220` | INIT | `proxmox-host` | Assigned by the GCP host contract |
+| `10.77.0.221` | MAKE | Harbor registry and chart source | `[OPEN]` GCP reservation and routing |
+| `10.77.0.222` | MAKE | release-feed HTTPS service | `[OPEN]` GCP reservation and routing |
+
+The proposed Argo CD and OpenBao services are ClusterIP-only. Argo CD would
+use loopback-bound operator access, and the release-feed pod would reach
+OpenBao inside the cluster. These are source designs, not deployed endpoint
+or reachability evidence.
 
 ## GCP K3s Cluster
 
