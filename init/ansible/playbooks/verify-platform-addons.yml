@@ -1,0 +1,64 @@
+---
+# Read-only verification of GCP platform host prerequisites.
+- name: Verify GCP platform add-ons
+  hosts: "{{ shell_platform_target_group }}"
+  serial: 1
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  vars_files:
+    - ../vars/platform-addons.yml
+  pre_tasks:
+    - name: Require the fixed GCP platform target
+      ansible.builtin.assert:
+        that:
+          - shell_platform_cluster_name == 'gcp'
+          - shell_platform_target_group == 'gcp_k3s_servers'
+          - ansible_play_hosts_all == groups.gcp_k3s_servers
+          - groups.gcp_k3s_servers | length == 3
+        fail_msg: Platform verification requires all three GCP K3s servers.
+
+    - name: Wait for the selected K3s node
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+  tasks:
+    - name: Check the K3s API
+      ansible.builtin.command:
+        argv: ["{{ shell_platform_kubectl }}", kubectl, get, --raw=/readyz]
+      changed_when: false
+      register: shell_platform_ready
+      failed_when: shell_platform_ready.stdout | trim != 'ok'
+
+    - name: Verify the dedicated Longhorn data mount
+      ansible.builtin.command:
+        argv:
+          - findmnt
+          - --mountpoint
+          - "{{ shell_platform_data_mount }}"
+          - --output
+          - TARGET,FSTYPE
+          - --noheadings
+      changed_when: false
+      register: shell_platform_mount
+      failed_when: >-
+        shell_platform_mount.stdout is not search(shell_platform_data_mount)
+        or shell_platform_mount.stdout is not search('ext4')
+
+    - name: Verify the platform CA checksum
+      ansible.builtin.stat:
+        path: "{{ shell_platform_registry_ca_dest }}"
+        checksum_algorithm: sha256
+      register: shell_platform_ca
+
+    - name: Require the platform CA file
+      ansible.builtin.assert:
+        that:
+          - shell_platform_ca.stat.exists
+          - shell_platform_ca.stat.isreg
+          - shell_platform_ca.stat.mode == '0644'
+          - >-
+            shell_platform_ca.stat.checksum ==
+            (lookup('ansible.builtin.file', shell_platform_registry_ca_source) | hash('sha256'))
+        fail_msg: The SUDO-owned platform CA is missing or has unsafe permissions.

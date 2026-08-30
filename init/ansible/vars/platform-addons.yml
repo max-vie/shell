@@ -1,0 +1,16 @@
+---
+# GCP-only platform foundation for the first workload vertical slice.
+shell_platform_cluster_name: gcp
+shell_platform_target_group: gcp_k3s_servers
+shell_platform_registry_hostname: registry.shell.internal
+shell_platform_registry_ca_source: >-
+  {{ playbook_dir }}/../../../sudo/pki/shell-offline-root.crt.pem
+shell_platform_registry_ca_dest: /usr/local/share/ca-certificates/shell-platform-ca.crt
+shell_platform_data_device: "/dev/disk/by-id/google-{{ inventory_hostname }}-data"
+shell_platform_data_mount: /var/lib/longhorn
+shell_platform_format_data_disk: false
+shell_platform_kubectl: /usr/local/bin/k3s
+shell_platform_required_packages:
+  - ca-certificates
+  - open-iscsi
+  - util-linux

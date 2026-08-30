@@ -1,0 +1,57 @@
+---
+# Install SUDO's public platform CA before private registry consumers run.
+- name: Configure GCP K3s registry trust
+  hosts: "{{ shell_platform_target_group }}"
+  serial: 1
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  vars_files:
+    - ../vars/platform-addons.yml
+  pre_tasks:
+    - name: Require the fixed GCP K3s trust target
+      ansible.builtin.assert:
+        that:
+          - shell_platform_cluster_name == 'gcp'
+          - shell_platform_target_group == 'gcp_k3s_servers'
+          - ansible_play_hosts_all == groups.gcp_k3s_servers
+          - groups.gcp_k3s_servers | length == 3
+        fail_msg: Registry trust accepts only the complete GCP K3s group.
+    - name: Stop before trust connections in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+    - name: Wait for the selected K3s node
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+  tasks:
+    - name: Install the SUDO-owned platform CA
+      ansible.builtin.copy:
+        src: "{{ shell_platform_registry_ca_source }}"
+        dest: "{{ shell_platform_registry_ca_dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Refresh platform CA
+        - Restart K3s after trust changes
+        - Wait for K3s readiness
+    - name: Flush trust handler
+      ansible.builtin.meta: flush_handlers
+  handlers:
+    - name: Refresh platform CA
+      ansible.builtin.command:
+        argv: [update-ca-certificates]
+      changed_when: true
+    - name: Restart K3s after trust changes
+      ansible.builtin.service:
+        name: k3s
+        state: restarted
+    - name: Wait for K3s readiness
+      ansible.builtin.command:
+        argv: [k3s, kubectl, get, --raw=/readyz]
+      register: shell_registry_trust_ready
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: shell_registry_trust_ready.stdout | trim == 'ok'

@@ -1,0 +1,38 @@
+---
+# Read-only registry trust verification.
+- name: Verify GCP K3s registry trust
+  hosts: "{{ shell_platform_target_group }}"
+  serial: 1
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  vars_files:
+    - ../vars/platform-addons.yml
+  pre_tasks:
+    - name: Require the fixed GCP K3s trust target
+      ansible.builtin.assert:
+        that:
+          - shell_platform_cluster_name == 'gcp'
+          - shell_platform_target_group == 'gcp_k3s_servers'
+          - ansible_play_hosts_all == groups.gcp_k3s_servers
+        fail_msg: Registry trust verification accepts only GCP K3s servers.
+    - name: Wait for the selected K3s node
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+  tasks:
+    - name: Inspect the installed platform CA
+      ansible.builtin.stat:
+        path: "{{ shell_platform_registry_ca_dest }}"
+        checksum_algorithm: sha256
+      register: shell_platform_ca
+    - name: Require the installed platform CA
+      ansible.builtin.assert:
+        that:
+          - shell_platform_ca.stat.exists
+          - shell_platform_ca.stat.isreg
+          - shell_platform_ca.stat.mode == '0644'
+          - >-
+            shell_platform_ca.stat.checksum ==
+            (lookup('ansible.builtin.file', shell_platform_registry_ca_source) | hash('sha256'))
+        fail_msg: The platform CA is missing or has unsafe permissions.
