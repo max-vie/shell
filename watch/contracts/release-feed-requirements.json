@@ -1,0 +1,45 @@
+{
+  "description": "WATCH read-only policy and evidence contract for release-feed.",
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "release-feed-requirements",
+  "policy_owner": "watch",
+  "consumer_owners": [
+    "make",
+    "watch"
+  ],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "cluster": {
+    "name": "gcp",
+    "inventory_group": "gcp_k3s_servers",
+    "first_server": "gcp-k3s-01",
+    "first_server_address": "10.77.0.201"
+  },
+  "service": {
+    "namespace": "release-feed",
+    "name": "release-feed",
+    "address": "10.77.0.222",
+    "port": 443,
+    "health_path": "/healthz",
+    "metrics_path": "/metrics",
+    "tls_server_name": "releases.shell.internal"
+  },
+  "workload": {
+    "kind": "StatefulSet",
+    "name": "release-feed",
+    "replicas": 1,
+    "storage_class": "longhorn",
+    "storage_size": "1Gi",
+    "retention": "retain",
+    "max_records": 1000,
+    "capacity_warning_remaining": 100
+  },
+  "evidence": [
+    "HTTPS service has the declared address",
+    "StatefulSet has one ready replica",
+    "retained Longhorn claim is bound",
+    "health and metrics endpoints respond"
+  ],
+  "failure_policy": "read-only-diagnosis"
+}

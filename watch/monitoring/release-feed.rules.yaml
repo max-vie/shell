@@ -1,0 +1,33 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shell-watch-release-feed
+  namespace: monitoring
+  labels:
+    release: shell-watch
+    shell.platform/owner: watch
+spec:
+  groups:
+    - name: shell.release-feed
+      rules:
+        - alert: ShellReleaseFeedUnavailable
+          expr: >-
+            (up{namespace="release-feed",service="release-feed"} == 0)
+            or absent(up{namespace="release-feed",service="release-feed"})
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: release-feed metrics target is unavailable
+            description: The release-feed ServiceMonitor has no healthy target.
+        - alert: ShellReleaseFeedCapacityLow
+          expr: >-
+            (release_feed_capacity_remaining{namespace="release-feed",service="release-feed"} < 100)
+            or absent(release_feed_capacity_remaining{namespace="release-feed",service="release-feed"})
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: release-feed record capacity is low
+            description: Fewer than 100 durable slots remain, or the capacity metric is absent.
