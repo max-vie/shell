@@ -61,6 +61,29 @@ No FreeIPA package installation, credential generation, image acquisition,
 guest startup, Forgejo deployment, or live DNS proof is included in this
 source-only boundary.
 
+### GCP platform add-ons
+
+The GCP platform launcher prepares the three K3s hosts for later MAKE-owned
+workloads. INIT installs the required host packages, mounts one dedicated
+ext4 data disk per node at `/var/lib/longhorn`, and installs the SUDO-owned
+platform certificate authority. It does not install MetalLB, Longhorn,
+Harbor, Argo CD, OpenBao, or release-feed, and it does not reserve service
+addresses. MAKE remains the only lifecycle that may change Kubernetes
+workloads.
+
+The disk gate accepts an existing ext4 filesystem only when the device is
+unmounted or already mounted at `/var/lib/longhorn`. Formatting is allowed
+only when `blkid` finds no recognized filesystem, `lsblk` finds no partition
+or mount, and the operator has reviewed the exact device and supplied the
+separate destructive approval. A device with any other recognized type is
+refused. The source must not describe an unrecognized device as empty because
+this check does not prove that it holds no recoverable data.
+
+The launcher accepts only the fixed GCP K3s group and host-preparation
+playbooks. Source checks and Ansible lint do not prove the disk identity or
+contents, mounted state, node certificate trust, K3s restart safety, or any
+Kubernetes storage and load-balancer behavior.
+
 ## Secrets
 
 ### Inventory and handling
@@ -97,12 +120,18 @@ the K3s configuration with mode `0600` and exports the administrator kubeconfig
 to ignored local state. The complete K3s contract lives in
 [`k3s-runtime.md`](k3s-runtime.md).
 
-### OpenBao transition
+### OpenBao handoff
 
-The provider and Ansible handoff is temporary. When OpenBao becomes the
-approved secret owner, replace the private environment and file-path inputs
-with the reviewed OpenBao handoff. Record the transition after the new owner
-and read-only retrieval path have source and live evidence.
+The source contracts select OpenBao as the intended runtime secret owner for
+release-feed. SUDO defines encrypted bootstrap custody and release-feed input
+shapes. MAKE defines a Kubernetes-authenticated role and an agent that would
+render only the read and write token files into the release-feed pod.
+
+This handoff cannot run yet. The K3s API certificate authority and reviewer
+identity handoffs, a supported route to the ClusterIP-only OpenBao service,
+independent custody of Shamir shares, Raft member joins, and per-node unseal
+are unresolved. Source validation does not prove bootstrap, custody, unseal,
+token issuance, or retrieval.
 
 ## State
 
