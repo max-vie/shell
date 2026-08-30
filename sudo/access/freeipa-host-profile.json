@@ -45,6 +45,22 @@
       "record_type": "A",
       "address": "10.77.0.211",
       "service_owner": "make"
+    },
+    {
+      "name": "registry",
+      "fqdn": "registry.shell.internal",
+      "zone": "shell.internal",
+      "record_type": "A",
+      "address": "10.77.0.221",
+      "service_owner": "make"
+    },
+    {
+      "name": "releases",
+      "fqdn": "releases.shell.internal",
+      "zone": "shell.internal",
+      "record_type": "A",
+      "address": "10.77.0.222",
+      "service_owner": "make"
     }
   ],
   "execution": {

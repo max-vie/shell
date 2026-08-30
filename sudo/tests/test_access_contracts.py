@@ -47,6 +47,9 @@ class TestAccessContracts(unittest.TestCase):
             "sudo/pki/shell-offline-root.crt.pem",
             "sudo/scripts/generate_k3s_server_tokens.py",
             "sudo/secrets/k3s-server-token-contract.json",
+            "sudo/secrets/release-feed-input-contract.json",
+            "sudo/secrets/openbao-bootstrap-contract.json",
+            "sudo/scripts/validate_stateful_inputs.py",
         ):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -441,7 +444,7 @@ class TestAccessContracts(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(
             stdout.getvalue(),
-            "validated 4 SUDO access profiles and 3 handoff contracts\n",
+            "validated 4 SUDO access profiles and 5 handoff contracts\n",
         )
 
 

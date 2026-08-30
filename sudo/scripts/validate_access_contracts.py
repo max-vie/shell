@@ -288,6 +288,22 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
                 "address": "10.77.0.211",
                 "service_owner": "make",
             },
+            {
+                "name": "registry",
+                "fqdn": "registry.shell.internal",
+                "zone": "shell.internal",
+                "record_type": "A",
+                "address": "10.77.0.221",
+                "service_owner": "make",
+            },
+            {
+                "name": "releases",
+                "fqdn": "releases.shell.internal",
+                "zone": "shell.internal",
+                "record_type": "A",
+                "address": "10.77.0.222",
+                "service_owner": "make",
+            },
         ],
         "FreeIPA managed DNS records changed",
     )
@@ -798,6 +814,32 @@ def validate_k3s_server_token_contract(repository_root: Path) -> None:
         raise AccessContractError("K3s server-token contract is invalid") from error
 
 
+def validate_stateful_input_contracts(repository_root: Path) -> None:
+    """Run the SUDO-owned registry and OpenBao contract validator."""
+
+    script = resolve_repository_file(
+        repository_root / "sudo/scripts/validate_stateful_inputs.py",
+        repository_root=repository_root,
+        label="stateful-input validator",
+    )
+    spec = importlib.util.spec_from_file_location(
+        "sudo_stateful_input_validator", script
+    )
+    if spec is None or spec.loader is None:
+        raise AccessContractError("cannot load stateful-input validator")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        module.validate_release_feed(
+            repository_root / "sudo/secrets/release-feed-input-contract.json"
+        )
+        module.validate_openbao(
+            repository_root / "sudo/secrets/openbao-bootstrap-contract.json"
+        )
+    except (OSError, UnicodeError, ValueError) as error:
+        raise AccessContractError("stateful-input contracts are invalid") from error
+
+
 def validate_contracts(
     repository_root: Path = REPOSITORY_ROOT,
 ) -> dict[str, dict[str, Any]]:
@@ -819,6 +861,7 @@ def validate_contracts(
     validate_kubernetes(documents["kubernetes"], repository_root)
     validate_kubernetes_input_contract(repository_root)
     validate_k3s_server_token_contract(repository_root)
+    validate_stateful_input_contracts(repository_root)
     return documents
 
 
@@ -828,7 +871,7 @@ def main() -> int:
     except AccessContractError as error:
         print(f"access contract validation failed: {error}", file=sys.stderr)
         return 2
-    print(f"validated {len(documents)} SUDO access profiles and 3 handoff contracts")
+    print(f"validated {len(documents)} SUDO access profiles and 5 handoff contracts")
     return 0
 
 
