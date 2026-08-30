@@ -1,0 +1,58 @@
+{
+  "description": "TAR supply contract for MAKE-owned GCP K3s platform add-ons.",
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "platform-addons-supply",
+  "policy_owner": "tar",
+  "execution_owner": "make",
+  "environment": "environment-gcp",
+  "k3s_version": "v1.34.10+k3s1",
+  "controller_tools": {
+    "helm": "3.18.4"
+  },
+  "staging": {
+    "mode": "local-verified-artifacts",
+    "network_acquisition_owner": "tar",
+    "consumer_network_acquisition": false,
+    "artifact_directory": "platform-addons",
+    "chart_cache_layout": "charts/{name}-{version}.tgz"
+  },
+  "charts": {
+    "metallb": {
+      "repository": "https://metallb.github.io/metallb",
+      "name": "metallb",
+      "version": "0.15.2",
+      "source": "https://github.com/metallb/metallb/releases/download/metallb-chart-0.15.2/metallb-0.15.2.tgz",
+      "sha256": "4f0fc313cd97819a1c78fff0a389dfe1c9f98bc490f33f521317475df1d7b873"
+    },
+    "longhorn": {
+      "repository": "https://charts.longhorn.io",
+      "name": "longhorn",
+      "version": "1.10.1",
+      "source": "https://github.com/longhorn/charts/releases/download/longhorn-1.10.1/longhorn-1.10.1.tgz",
+      "sha256": "a871d397e19cf3243949abd41fd294869f5c2c490014f29e71866a2433ec7fb9"
+    }
+  },
+  "service_addresses": {
+    "proxmox_host": "10.77.0.220",
+    "harbor": "10.77.0.221",
+    "release_feed": "10.77.0.222"
+  },
+  "runtime_image_digests": {
+    "quay.io/metallb/controller:v0.15.2": "sha256:9bd30b4ee165ad6bababa6334594d854b8c1037c385af83832fb07a4b2c23212",
+    "quay.io/metallb/speaker:v0.15.2": "sha256:7dbe5e4b1ee3be1638b1620e2670649e9900768972060a31d2e809855e31e344",
+    "longhornio/longhorn-manager:v1.10.1": "sha256:437134e6f9db6359b4d15c6406fba69770a7f1e5c5ca98f387ef4ef0199ec40c",
+    "longhornio/longhorn-ui:v1.10.1": "sha256:2902a068a28e8b59292a4d5fe2411ce0183680406e29dd0b2690a5576da9283f",
+    "longhornio/longhorn-engine:v1.10.1": "sha256:b6b30ace865932a686afde56757213d6c86834645443f3af1528a93b7ddf52f4",
+    "longhornio/longhorn-instance-manager:v1.10.1": "sha256:eb07a8ef38a3f792689d787b8ee6c48e1c938b6c7fd54283e7567be7637ed816",
+    "longhornio/longhorn-share-manager:v1.10.1": "sha256:4e7fd54a2eb4b2a6c2db50bce3401cc5bab5a7c5e60643a1b8204d9685b5abb7",
+    "longhornio/backing-image-manager:v1.10.1": "sha256:fba719d0421dc3afe86a5fa91ea7374b4b745a3116349c603761b32c16e45570",
+    "longhornio/support-bundle-kit:v0.0.71": "sha256:29e8533e56c2ab003fcfdc7982aa0fcba9c318863e3f4731bacca7da1749b91a",
+    "longhornio/csi-attacher:v4.10.0-20251030": "sha256:8b890681baf2db07349291a526447bcc0fd88ef10d1f65c7d03b209bf6c1d929",
+    "longhornio/csi-provisioner:v5.3.0-20251030": "sha256:5a4b29fae29932779565555641d987ddf51e6ce6683783682a19e07dd70c535a",
+    "longhornio/csi-node-driver-registrar:v2.15.0-20251030": "sha256:b3721142339648f9ae720357d5a7cf7270e023c9ef6f121848bf3966f152e748",
+    "longhornio/csi-resizer:v1.14.0-20251030": "sha256:b00495c0ba952a1a50c82339c976ca44fc3520373246e421e29db46277c536d7",
+    "longhornio/csi-snapshotter:v8.4.0-20251030": "sha256:e5ed25cc86e653e9132ab73f7042588bdd8ed07c3bb64fcb6ab72dea4caaf959",
+    "longhornio/livenessprobe:v2.17.0-20251030": "sha256:6f8044c72fa9848ef4ccd0dfb26f1db1d1341d6ca86320dbf28737a816221440"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "description": "TAR supply contract for GCP platform services consumed by MAKE.",
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "platform-services-supply",
+  "policy_owner": "tar",
+  "execution_owner": "make",
+  "environment": "environment-gcp",
+  "staging": {
+    "mode": "local-verified-artifacts",
+    "network_acquisition_owner": "tar",
+    "consumer_network_acquisition": false,
+    "artifact_directory": "platform-services",
+    "chart_cache_layout": "charts/{name}-{version}.tgz"
+  },
+  "charts": {
+    "harbor": {
+      "repository": "https://helm.goharbor.io",
+      "name": "harbor",
+      "version": "1.19.2",
+      "application_version": "2.15.2",
+      "source": "https://helm.goharbor.io/harbor-1.19.2.tgz",
+      "sha256": "36d8eeb41b4df1aeff18c9af7709110a2fac2194b491d37957822b3359cd5e9a"
+    },
+    "argo-cd": {
+      "repository": "https://argoproj.github.io/argo-helm",
+      "name": "argo-cd",
+      "version": "10.1.4",
+      "source": "https://argoproj.github.io/argo-helm/argo-cd-10.1.4.tgz",
+      "sha256": "142d2eaaa2adf9051c109c396c5fe3af742674011a5837df262bd6f8f2991d2c"
+    },
+    "openbao": {
+      "repository": "https://openbao.github.io/openbao-helm",
+      "name": "openbao",
+      "version": "0.28.6",
+      "source": "https://openbao.github.io/openbao-helm/openbao-0.28.6.tgz",
+      "sha256": "175c5cea2d36b68d348eca872044656bd8740c4dbe26b7dc8eb7c7438474a8b3"
+    }
+  },
+  "runtime_image_digests": {
+    "quay.io/openbao/openbao:2.6.1": "sha256:5b2486ab0fb90bbc788cc345b0a08616dfb375873ee8be5df3a2fd4d378a67e0"
+  },
+  "image_resolution": {
+    "harbor": "tar/manifests/harbor-supply.json",
+    "release_feed": "tar/manifests/release-feed-supply.json",
+    "argo_cd": "blocked-unresolved-runtime-images"
+  }
+}

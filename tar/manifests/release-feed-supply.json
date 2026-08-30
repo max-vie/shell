@@ -1,0 +1,25 @@
+{
+  "description": "TAR supply contract for the MAKE release-feed image.",
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "release-feed-supply",
+  "policy_owner": "tar",
+  "execution_owner": "make",
+  "environment": "environment-gcp",
+  "image_repository": "registry.shell.internal/shell/release-feed",
+  "image_platform": "linux/amd64",
+  "image_digest": null,
+  "source_state": "unpromoted",
+  "base_image": {
+    "repository": "cgr.dev/chainguard/python",
+    "digest": "sha256:d812438658b47b73cb4c089f4cca09bca1ba50f6cd1843133864ee074d9ec49b"
+  },
+  "kubernetes_manifest": "../make/apps/release-feed/k8s/base/kustomization.yaml",
+  "scan_required": true,
+  "publication": {
+    "build_context": "make/apps/release-feed",
+    "delivery_host": "delivery-01",
+    "preserve_digests": true,
+    "overwrite": false
+  }
+}
