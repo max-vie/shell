@@ -1,0 +1,23 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: release-feed
+  namespace: release-feed
+  labels:
+    release: shell-watch
+    app.kubernetes.io/name: release-feed
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: release-feed
+  endpoints:
+    - port: https
+      scheme: https
+      path: /metrics
+      interval: 15s
+      tlsConfig:
+        serverName: release-feed.release-feed.svc.cluster.local
+        ca:
+          secret:
+            name: release-feed-tls
+            key: ca.crt

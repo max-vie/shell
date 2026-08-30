@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-feed-openbao-agent
+  namespace: release-feed
+  labels:
+    app.kubernetes.io/name: release-feed
+data:
+  config-init.hcl: |
+    exit_after_auth = true
+    pid_file = "/tmp/openbao-agent.pid"
+
+    openbao {
+      address = "https://openbao-active.openbao.svc.cluster.local:8200"
+      ca_cert = "/openbao-ca/ca.crt"
+    }
+
+    auto_auth {
+      method "kubernetes" {
+        mount_path = "auth/kubernetes"
+        config = {
+          role = "release-feed"
+          token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        }
+      }
+    }
+
+    template {
+      contents = "{{- with secret \"secret/data/release-feed\" -}}{{ .Data.data.read_token }}{{- end -}}"
+      destination = "/run/secrets/read-token"
+      perms = "0400"
+    }
+
+    template {
+      contents = "{{- with secret \"secret/data/release-feed\" -}}{{ .Data.data.write_token }}{{- end -}}"
+      destination = "/run/secrets/write-token"
+      perms = "0400"
+    }

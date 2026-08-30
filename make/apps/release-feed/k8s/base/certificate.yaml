@@ -1,0 +1,27 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: release-feed-tls
+  namespace: release-feed
+  labels:
+    app.kubernetes.io/name: release-feed
+spec:
+  secretName: release-feed-tls
+  duration: 2160h
+  renewBefore: 720h
+  privateKey:
+    rotationPolicy: Always
+    algorithm: RSA
+    size: 2048
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  dnsNames:
+    - releases.shell.internal
+    - release-feed.release-feed.svc
+    - release-feed.release-feed.svc.cluster.local
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: shell-cluster-intermediate
