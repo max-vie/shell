@@ -9,7 +9,10 @@ data "terraform_remote_state" "shared" {
 }
 
 locals {
-  shared = data.terraform_remote_state.shared.outputs
+  shared          = data.terraform_remote_state.shared.outputs
+  platform_supply = jsondecode(file("${path.root}/../../../../tar/manifests/platform-addons-supply.json"))
+  service_routing = local.platform_supply.service_routing
+  services        = local.service_routing.services
 }
 
 resource "google_compute_firewall" "iap_ssh" {
@@ -59,6 +62,34 @@ resource "google_compute_firewall" "api_health_checks" {
   }
 }
 
+resource "google_compute_firewall" "service_proxy_access" {
+  project       = var.project_id
+  name          = "${var.api_name}-allow-service-proxies"
+  network       = local.shared.network_self_link
+  direction     = "INGRESS"
+  source_ranges = [local.shared.proxy_only_subnet_cidr]
+  target_tags   = ["shell-gcp-k3s"]
+
+  allow {
+    protocol = "tcp"
+    ports    = [for service in values(local.services) : tostring(service.backend_port)]
+  }
+}
+
+resource "google_compute_firewall" "service_health_checks" {
+  project       = var.project_id
+  name          = "${var.api_name}-allow-service-health-checks"
+  network       = local.shared.network_self_link
+  direction     = "INGRESS"
+  source_ranges = var.health_check_source_ranges
+  target_tags   = ["shell-gcp-k3s"]
+
+  allow {
+    protocol = "tcp"
+    ports    = [for service in values(local.services) : tostring(service.health_check_port)]
+  }
+}
+
 module "k3s_nodes" {
   for_each = var.k3s_nodes
   source   = "../../modules/gcp-private-node"
@@ -85,6 +116,16 @@ resource "google_compute_instance_group" "k3s" {
   name      = "${each.key}-group"
   zone      = each.value.zone
   instances = [module.k3s_nodes[each.key].self_link]
+
+  named_port {
+    name = local.services.harbor.backend_port_name
+    port = local.services.harbor.backend_port
+  }
+
+  named_port {
+    name = local.services.release_feed.backend_port_name
+    port = local.services.release_feed.backend_port
+  }
 }
 
 resource "google_compute_address" "api" {
@@ -135,4 +176,69 @@ resource "google_compute_forwarding_rule" "api" {
   network               = local.shared.network_self_link
   subnetwork            = local.shared.subnetwork_self_link
   ports                 = ["6443"]
+}
+
+resource "google_compute_address" "service" {
+  for_each     = local.services
+  project      = var.project_id
+  name         = "${var.api_name}-${replace(each.key, "_", "-")}"
+  region       = local.shared.region
+  address_type = "INTERNAL"
+  subnetwork   = local.shared.subnetwork_self_link
+  address      = each.value.address
+}
+
+resource "google_compute_region_health_check" "service" {
+  for_each = local.services
+  project  = var.project_id
+  name     = "${var.api_name}-${replace(each.key, "_", "-")}"
+  region   = local.shared.region
+
+  tcp_health_check {
+    port = each.value.health_check_port
+  }
+}
+
+resource "google_compute_region_backend_service" "service" {
+  for_each              = local.services
+  project               = var.project_id
+  name                  = "${var.api_name}-${replace(each.key, "_", "-")}"
+  region                = local.shared.region
+  protocol              = local.service_routing.protocol
+  load_balancing_scheme = "INTERNAL_MANAGED"
+  port_name             = each.value.backend_port_name
+  health_checks         = [google_compute_region_health_check.service[each.key].id]
+  network               = local.shared.network_self_link
+
+  dynamic "backend" {
+    for_each = google_compute_instance_group.k3s
+
+    content {
+      group          = backend.value.self_link
+      balancing_mode = "CONNECTION"
+    }
+  }
+}
+
+resource "google_compute_region_target_tcp_proxy" "service" {
+  for_each        = local.services
+  project         = var.project_id
+  name            = "${var.api_name}-${replace(each.key, "_", "-")}"
+  region          = local.shared.region
+  backend_service = google_compute_region_backend_service.service[each.key].id
+}
+
+resource "google_compute_forwarding_rule" "service" {
+  for_each              = local.services
+  project               = var.project_id
+  name                  = "${var.api_name}-${replace(each.key, "_", "-")}"
+  region                = local.shared.region
+  ip_address            = google_compute_address.service[each.key].address
+  target                = google_compute_region_target_tcp_proxy.service[each.key].id
+  ip_protocol           = local.service_routing.protocol
+  load_balancing_scheme = "INTERNAL_MANAGED"
+  network               = local.shared.network_self_link
+  subnetwork            = local.shared.subnetwork_self_link
+  ports                 = [tostring(local.service_routing.frontend_port)]
+  allow_global_access   = local.service_routing.global_access
 }

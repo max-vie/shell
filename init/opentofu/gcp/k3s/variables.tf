@@ -20,7 +20,7 @@ variable "iap_source_ranges" {
 }
 
 variable "health_check_source_ranges" {
-  description = "Google Cloud health-check source ranges allowed to reach port 6443."
+  description = "Google Cloud health-check source ranges allowed to reach backend ports."
   type        = list(string)
   default     = ["35.191.0.0/16"]
 
@@ -60,6 +60,8 @@ variable "api_address" {
         "10.77.0.210",
         "10.77.0.211",
         "10.77.0.220",
+        "10.77.0.221",
+        "10.77.0.222",
       ], var.api_address),
       false,
     )

@@ -1,3 +1,11 @@
+locals {
+  # TAR owns the public platform supply contract. The routing subsection is
+  # consumed here for the GCP-managed proxy subnet and by the K3s root for
+  # service frontends.
+  platform_supply = jsondecode(file("${path.root}/../../../../tar/manifests/platform-addons-supply.json"))
+  service_routing = local.platform_supply.service_routing
+}
+
 resource "google_project_service" "compute" {
   project            = var.project_id
   service            = "compute.googleapis.com"
@@ -31,6 +39,18 @@ resource "google_compute_subnetwork" "shared" {
     flow_sampling        = 0.5
     metadata             = "INCLUDE_ALL_METADATA"
   }
+}
+
+resource "google_compute_subnetwork" "proxy_only" {
+  project       = var.project_id
+  name          = local.service_routing.proxy_only_subnet.name
+  region        = google_compute_subnetwork.shared.region
+  network       = google_compute_network.shared.id
+  ip_cidr_range = local.service_routing.proxy_only_subnet.cidr
+  purpose       = "REGIONAL_MANAGED_PROXY"
+  role          = "ACTIVE"
+
+  depends_on = [google_project_service.compute]
 }
 
 resource "google_compute_router" "shared" {

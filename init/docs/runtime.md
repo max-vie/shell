@@ -66,10 +66,14 @@ source-only boundary.
 The GCP platform launcher prepares the three K3s hosts for later MAKE-owned
 workloads. INIT installs the required host packages, mounts one dedicated
 ext4 data disk per node at `/var/lib/longhorn`, and installs the SUDO-owned
-platform certificate authority. It does not install MetalLB, Longhorn,
-Harbor, Argo CD, OpenBao, or release-feed, and it does not reserve service
-addresses. MAKE remains the only lifecycle that may change Kubernetes
-workloads.
+platform certificate authority. The GCP OpenTofu roots also own the internal
+proxy load-balancer subnet and the `.221` and `.222` service frontends. INIT
+does not install MetalLB, Longhorn, Harbor, Argo CD, OpenBao, or release-feed.
+MAKE remains the only lifecycle that may change Kubernetes workloads.
+
+The service frontends pass TLS on port `443` to the MAKE-owned Harbor and
+release-feed NodePorts `30443` and `30444`. Provider state, health checks,
+backend reachability, and service traffic require separate live evidence.
 
 The disk gate accepts an existing ext4 filesystem only when the device is
 unmounted or already mounted at `/var/lib/longhorn`. Formatting is allowed

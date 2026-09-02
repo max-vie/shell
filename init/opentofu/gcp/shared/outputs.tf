@@ -23,6 +23,16 @@ output "subnet_cidr" {
   value       = google_compute_subnetwork.shared.ip_cidr_range
 }
 
+output "proxy_only_subnetwork_self_link" {
+  description = "Regional proxy-only subnet used by GCP internal proxy load balancers."
+  value       = google_compute_subnetwork.proxy_only.self_link
+}
+
+output "proxy_only_subnet_cidr" {
+  description = "CIDR reserved for GCP-managed internal load-balancer proxies."
+  value       = google_compute_subnetwork.proxy_only.ip_cidr_range
+}
+
 output "region" {
   description = "The authoritative GCP region for the shared subnet."
   value       = google_compute_subnetwork.shared.region

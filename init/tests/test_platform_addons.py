@@ -52,6 +52,22 @@ class PlatformAddonsTests(unittest.TestCase):
         self.assertNotIn("helm upgrade", playbook)
         self.assertNotIn("kubectl\n          - apply", playbook)
 
+    def test_gcp_service_routing_stays_in_opentofu(self) -> None:
+        source = (ROOT / "init/opentofu/gcp/k3s/main.tf").read_text(encoding="utf-8")
+        self.assertIn('load_balancing_scheme = "INTERNAL_MANAGED"', source)
+        self.assertIn("google_compute_region_target_tcp_proxy", source)
+        self.assertIn("local.services.harbor.backend_port", source)
+        self.assertIn("local.services.release_feed.backend_port", source)
+        self.assertNotIn("BGPPeer", source)
+        self.assertNotIn("helm upgrade", source)
+
+    def test_service_addresses_are_excluded_from_the_api_address(self) -> None:
+        source = (ROOT / "init/opentofu/gcp/k3s/variables.tf").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"10.77.0.221"', source)
+        self.assertIn('"10.77.0.222"', source)
+
     def test_playbooks_do_not_accept_an_arbitrary_cluster(self) -> None:
         source = (
             ROOT / "init/ansible/playbooks/configure-platform-addons.yml"

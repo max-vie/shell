@@ -8,6 +8,17 @@ output "api_endpoint" {
   value       = "https://${google_compute_address.api.address}:6443"
 }
 
+output "service_endpoints" {
+  description = "Internal GCP proxy load-balancer frontend addresses for MAKE services."
+  value = {
+    for name, address in google_compute_address.service : name => {
+      address         = address.address
+      port            = local.service_routing.frontend_port
+      forwarding_rule = google_compute_forwarding_rule.service[name].name
+    }
+  }
+}
+
 output "k3s_nodes" {
   description = "Direct-GCP K3s node identity, placement, and source-image facts."
   value = {
