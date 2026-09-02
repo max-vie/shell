@@ -2,7 +2,7 @@
 
 SHELL defines two independent K3s variants and two shared platform nodes.
 This page lists their intended placement and separates assigned node addresses
-from proposed workload addresses.
+from source-defined service frontend addresses.
 
 ## Topology
 
@@ -26,22 +26,22 @@ environment; no separate Proxmox copies are planned.
 | `identity-01` | `10.77.0.210` | FreeIPA identity and internal DNS |
 | `delivery-01` | `10.77.0.211` | Forgejo and rootless runner |
 
-## Proposed GCP service endpoints
+## GCP service endpoints
 
-The release-feed decision proposes two addresses next to the assigned
-Proxmox host address. `[OPEN]` means the source names the address but no GCP
-reservation or routing implementation exists.
+The service endpoints use regional GCP internal proxy load balancers. Provider
+state and service reachability remain unproven until their authorized gates
+run.
 
 | Address | Lifecycle owner | Intended use | Status |
 | --- | --- | --- | --- |
 | `10.77.0.220` | INIT | `proxmox-host` | Assigned by the GCP host contract |
-| `10.77.0.221` | MAKE | Harbor registry and chart source | `[OPEN]` GCP reservation and routing |
-| `10.77.0.222` | MAKE | release-feed HTTPS service | `[OPEN]` GCP reservation and routing |
+| `10.77.0.221` | INIT underlay / MAKE backend | Harbor registry and chart source | GCP internal proxy frontend; provider proof pending |
+| `10.77.0.222` | INIT underlay / MAKE backend | release-feed HTTPS service | GCP internal proxy frontend; provider proof pending |
 
-The proposed Argo CD and OpenBao services are ClusterIP-only. Argo CD would
-use loopback-bound operator access, and the release-feed pod would reach
-OpenBao inside the cluster. These are source designs, not deployed endpoint
-or reachability evidence.
+The proxy-only subnet is `10.77.2.0/23`. Harbor reaches its Kubernetes HTTPS
+NodePort at `30443`, and release-feed reaches `30444`. Argo CD and OpenBao
+remain ClusterIP-only. These are source designs, not deployed endpoint or
+reachability evidence.
 
 ## GCP K3s Cluster
 

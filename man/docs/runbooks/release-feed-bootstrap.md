@@ -1,6 +1,6 @@
 # Release-feed bootstrap
 
-Last updated: 30.08.2026
+Last updated: 2026-09-02
 
 ## Current boundary
 
@@ -9,28 +9,29 @@ release-feed slice. It is not an executable rollout. The supported MAKE
 targets refuse Harbor, Harbor robot, Argo CD, OpenBao, and release-feed
 mutation before private inputs are needed.
 
-Harbor uses proposed address `10.77.0.221`, and release-feed uses proposed
-address `10.77.0.222`. Both remain `[OPEN]` because INIT and GCP source do not
-reserve or route them. Argo CD and OpenBao are intended to remain
-ClusterIP-only.
+Harbor uses the source-defined GCP internal proxy frontend `10.77.0.221`, and
+release-feed uses `10.77.0.222`. Their provider state and reachability are not
+yet live-proven. The frontends listen on `443` and forward to MAKE-owned
+NodePorts `30443` and `30444`. Argo CD and OpenBao remain ClusterIP-only.
 
 ## Ownership
 
-INIT prepares the three GCP K3s hosts: required packages, the dedicated ext4
-data mount, and node trust for the SUDO-owned certificate authority. MAKE is
-the only owner allowed to install MetalLB, Longhorn, or another Kubernetes
-workload. TAR owns artifact staging and promotion. SUDO owns trust and private
-custody. WATCH owns read-only policy and evidence. MAN records the operating
-boundary.
+INIT owns the GCP proxy subnet, reserved service frontends, forwarding rules,
+health checks, firewalls, and the three-host preparation: required packages,
+the dedicated ext4 data mount, and node trust for the SUDO-owned certificate
+authority. MAKE owns MetalLB, Longhorn, and the NodePort workloads. TAR owns
+artifact staging and promotion. SUDO owns trust and private custody. WATCH
+owns read-only policy and evidence. MAN records the operating boundary.
 
 ## Blocking gates
 
 Resolve these gates in order. Recheck source after each gate because later
 steps depend on the exact outputs of earlier ones.
 
-1. Implement and review GCP reservation and routing for `.221` and `.222`.
-   Add the MAKE-owned MetalLB and Longhorn deployment path. INIT must remain
-   limited to host preparation.
+1. Apply and review the INIT OpenTofu changes for the proxy-only subnet,
+   reserved `.221`/`.222` frontends, backend named ports, health checks, and
+   firewalls. Apply the MAKE platform-add-on path and leave MetalLB without a
+   service address pool.
 2. Harden TAR platform staging with size bounds and no-follow publication.
    Add Helm provenance checks and isolated publisher credentials before chart
    publication. Lock every Argo CD runtime image digest.
@@ -56,7 +57,8 @@ steps depend on the exact outputs of earlier ones.
 ## Verification after implementation
 
 Run component source checks before requesting live authorization. A later
-authorized WATCH verifier can confirm the declared LoadBalancer Service,
+authorized WATCH verifier can confirm the declared GCP frontend and NodePort
+Service,
 one converged StatefulSet replica, a retained and bound 1 GiB Longhorn claim,
 successful health and metrics requests, and remaining capacity below the
 1,000-record limit.
