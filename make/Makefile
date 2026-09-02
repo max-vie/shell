@@ -54,6 +54,10 @@ WATCH_RECOVERY_SCRIPT := $(MAKE_ROOT)/scripts/watch_recovery.py
 WATCH_RECOVERY_APPROVAL := environment-gcp/watch/grafana-unavailable
 WATCH_RECOVERY_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
 WATCH_RECOVERY_CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
+PLATFORM_ADDONS_SCRIPT := $(MAKE_ROOT)/scripts/deploy_platform_addons.py
+PLATFORM_ADDONS_APPROVAL := environment-gcp/make/platform-addons
+PLATFORM_ADDONS_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
+PLATFORM_ADDONS_CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
 
 TRUST_VALIDATOR := $(MAKE_ROOT)/scripts/validate_cluster_trust.py
 INTERMEDIATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_cluster_intermediate.py
@@ -61,9 +65,9 @@ CERTIFICATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_consumer_certificate.py
 SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_kubernetes_supply.py
 TRUST_VALUES := $(MAKE_ROOT)/cert-manager/values.yaml
 
-.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply logs-check logs-preview logs-apply platform-check harbor-check harbor-preview harbor-apply harbor-robots-check harbor-robots-apply argocd-check argocd-preview argocd-apply argocd-root-apply argocd-verify argocd-repository-check argocd-repository-apply openbao-check openbao-preview openbao-bootstrap release-feed-check release-feed-preview release-feed-apply release-feed-verify watch-recovery-check watch-recovery-rule-preview watch-recovery-rule-apply watch-recovery-drill watch-recovery-restore
+.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply logs-check logs-preview logs-apply platform-check platform-addons-check platform-addons-preview platform-addons-apply platform-addons-verify harbor-check harbor-preview harbor-apply harbor-robots-check harbor-robots-apply argocd-check argocd-preview argocd-apply argocd-root-apply argocd-verify argocd-repository-check argocd-repository-apply openbao-check openbao-preview openbao-bootstrap release-feed-check release-feed-preview release-feed-apply release-feed-verify watch-recovery-check watch-recovery-rule-preview watch-recovery-rule-apply watch-recovery-drill watch-recovery-restore
 
-check: test trust-preview repository-check monitoring-check logs-check platform-check harbor-check argocd-check openbao-check release-feed-check
+check: test trust-preview repository-check monitoring-check logs-check platform-check platform-addons-check harbor-check argocd-check openbao-check release-feed-check
 
 test:
 	$(PYTHON) -m unittest discover -s $(MAKE_ROOT)/tests -p 'test_*.py'
@@ -224,6 +228,25 @@ logs-apply:
 platform-check:
 	$(PYTHON) "$(PLATFORM_SUPPLY_VALIDATOR)"
 	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_harbor_robots.py"
+
+platform-addons-check:
+	$(PYTHON) "$(PLATFORM_ADDONS_SCRIPT)" check
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_platform_addons.py"
+
+platform-addons-preview: platform-addons-check
+	$(PYTHON) "$(PLATFORM_ADDONS_SCRIPT)" template
+
+platform-addons-apply:
+	@test "$(APPROVAL)" = "$(PLATFORM_ADDONS_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/platform-addons' >&2; exit 2; }
+	$(PYTHON) "$(PLATFORM_ADDONS_SCRIPT)" apply \
+		--approval "$(APPROVAL)" \
+		--inventory "$(PLATFORM_ADDONS_INVENTORY)" \
+		--inventory "$(PLATFORM_ADDONS_CONNECTION_INVENTORY)"
+
+platform-addons-verify:
+	$(PYTHON) "$(PLATFORM_ADDONS_SCRIPT)" verify \
+		--inventory "$(PLATFORM_ADDONS_INVENTORY)" \
+		--inventory "$(PLATFORM_ADDONS_CONNECTION_INVENTORY)"
 
 harbor-check: platform-check
 	$(PYTHON) "$(MAKE_ROOT)/scripts/validate_harbor_robots.py"

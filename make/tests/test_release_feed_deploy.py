@@ -43,6 +43,14 @@ class ReleaseFeedDeployTests(unittest.TestCase):
         )
         self.assertIn(module.IMAGE_PLACEHOLDER, source)
 
+    def test_service_uses_the_gcp_backend_node_port(self) -> None:
+        source = (ROOT / "make/apps/release-feed/k8s/base/service.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("type: NodePort", source)
+        self.assertIn("nodePort: 30444", source)
+        self.assertNotIn("loadBalancerIP:", source)
+
     def test_rendered_manifests_replace_only_the_image_digest(self) -> None:
         digest = "sha256:" + "b" * 64
         temporary, directory = module.rendered_manifests(digest)

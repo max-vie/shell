@@ -7,14 +7,13 @@ metadata:
     app.kubernetes.io/name: release-feed
     shell.platform/owner: make
 spec:
-  type: LoadBalancer
-  loadBalancerIP: 10.77.0.222
-  loadBalancerSourceRanges:
-    - 10.77.0.0/24
+  type: NodePort
+  externalTrafficPolicy: Cluster
   selector:
     app.kubernetes.io/name: release-feed
   ports:
     - name: https
       port: 443
+      nodePort: 30444
       targetPort: https
       protocol: TCP

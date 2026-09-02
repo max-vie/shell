@@ -70,8 +70,9 @@ def validate_source() -> None:
     )
     values = json.loads(VALUES.read_text(encoding="utf-8"))
     require(
-        values["expose"]["loadBalancer"]["IP"] == "10.77.0.221",
-        "Harbor address changed",
+        values["expose"]["type"] == "nodePort"
+        and values["expose"]["nodePort"]["ports"]["https"]["nodePort"] == 30443,
+        "Harbor NodePort values changed",
     )
     require(values["trivy"]["enabled"] is True, "Harbor full profile must enable Trivy")
     require(

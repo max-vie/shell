@@ -72,7 +72,8 @@ class HarborBootstrapTests(unittest.TestCase):
 
     def test_harbor_source_is_full_profile(self) -> None:
         source = (ROOT / "tar/manifests/harbor-values.json").read_text(encoding="utf-8")
-        self.assertIn('"IP": "10.77.0.221"', source)
+        self.assertIn('"type": "nodePort"', source)
+        self.assertIn('"nodePort": 30443', source)
         self.assertIn('"enabled": true', source)
 
 

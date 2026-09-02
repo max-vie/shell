@@ -14,6 +14,11 @@ from typing import Any, cast
 
 import k3s_transport as transport
 
+TAR_SCRIPTS = Path(__file__).resolve().parents[2] / "tar/scripts"
+if str(TAR_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(TAR_SCRIPTS))
+import validate_platform_supply as platform_supply  # noqa: E402
+
 SCRIPT_ROOT = Path(__file__).resolve().parent
 ROOT = SCRIPT_ROOT.parents[1]
 # Remote mktemp results are regex-validated before use.
@@ -66,6 +71,7 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def validate_source(*, image_digest: str | None = None) -> None:
+    routing = platform_supply.validate_platform()["service_routing"]
     contract = read_json(CONTRACT)
     require(
         set(contract)
@@ -206,7 +212,12 @@ def validate_source(*, image_digest: str | None = None) -> None:
     service = (MANIFEST_ROOT / "service.yaml").read_text(encoding="utf-8")
     statefulset = (MANIFEST_ROOT / "statefulset.yaml").read_text(encoding="utf-8")
     require(
-        "loadBalancerIP: 10.77.0.222" in service, "release-feed service address changed"
+        "type: NodePort" in service
+        and "externalTrafficPolicy: Cluster" in service
+        and "nodePort: 30444" in service
+        and routing["services"]["release_feed"]["node_port"] == 30444
+        and "loadBalancerIP:" not in service,
+        "release-feed NodePort routing changed",
     )
     require(
         "storageClassName: longhorn" in statefulset,
