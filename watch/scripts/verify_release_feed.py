@@ -50,9 +50,22 @@ def verify(connection: transport.Connection) -> dict[str, Any]:
     require(isinstance(service_spec, dict), "release-feed service spec is missing")
     service_spec = cast(dict[str, Any], service_spec)
     require(
-        service_spec.get("type") == "LoadBalancer"
-        and service_spec.get("loadBalancerIP") == expected["service"]["address"],
-        "release-feed service address does not match the declared address",
+        service_spec.get("type") == expected["service"]["type"]
+        and service_spec.get("externalTrafficPolicy") == "Cluster",
+        "release-feed service type does not match the declared NodePort boundary",
+    )
+    ports_value = service_spec.get("ports")
+    require(isinstance(ports_value, list), "release-feed service ports are missing")
+    ports = cast(list[Any], ports_value)
+    https_ports = [
+        item
+        for item in ports
+        if isinstance(item, dict) and item.get("name") == "https"
+    ]
+    require(
+        len(https_ports) == 1
+        and https_ports[0].get("nodePort") == expected["service"]["node_port"],
+        "release-feed NodePort does not match the declared routing",
     )
     statefulset = resource(connection, "statefulset", expected["workload"]["name"])
     statefulset_spec = statefulset.get("spec")
@@ -124,7 +137,8 @@ def verify(connection: transport.Connection) -> dict[str, Any]:
     )
     return {
         "contract_id": expected["contract_id"],
-        "service_address": service_spec.get("loadBalancerIP"),
+        "service_address": expected["service"]["address"],
+        "service_node_port": https_ports[0].get("nodePort"),
         "ready_replicas": statefulset_status.get("readyReplicas"),
         "pvc_phase": pvc_status.get("phase"),
         "health_metrics_probe": "passed",
@@ -144,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         OSError,
         ReleaseFeedVerifyError,
         transport.TransportError,
-        contract.ReleaseFeedWatchError,
+        ValueError,
     ) as error:
         print(f"WATCH release-feed verification failed: {error}", file=sys.stderr)
         return 2

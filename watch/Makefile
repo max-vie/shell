@@ -11,14 +11,17 @@ INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
 CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
 RELEASE_FEED_VALIDATOR := $(WATCH_ROOT)/scripts/validate_release_feed.py
 RELEASE_FEED_VERIFY := $(WATCH_ROOT)/scripts/verify_release_feed.py
+PLATFORM_ADDONS_VALIDATOR := $(WATCH_ROOT)/scripts/validate_platform_addons.py
+PLATFORM_ADDONS_VERIFY := $(WATCH_ROOT)/scripts/verify_platform_addons.py
 
-.PHONY: check test check-logs check-recovery check-release-feed verify verify-logs verify-release-feed recovery-status recovery-preflight stability-soak
+.PHONY: check test check-logs check-recovery check-release-feed check-platform-addons verify verify-logs verify-release-feed verify-platform-addons recovery-status recovery-preflight stability-soak
 
 check: test
 
 test:
 	$(PYTHON) $(CONTRACT_VALIDATOR)
 	$(PYTHON) $(SUPPLY_VALIDATOR)
+	$(PYTHON) $(PLATFORM_ADDONS_VALIDATOR)
 	$(PYTHON) -m unittest discover -s $(WATCH_ROOT)/tests -p 'test_*.py'
 
 check-logs:
@@ -34,6 +37,10 @@ check-release-feed:
 	$(PYTHON) $(RELEASE_FEED_VALIDATOR)
 	$(PYTHON) -m unittest $(WATCH_ROOT)/tests/test_release_feed.py
 
+check-platform-addons:
+	$(PYTHON) $(PLATFORM_ADDONS_VALIDATOR)
+	$(PYTHON) -m unittest $(WATCH_ROOT)/tests/test_platform_addons.py
+
 # Read-only live verification for metrics and Grafana through the fixed first
 # GCP K3s server.
 verify:
@@ -48,6 +55,11 @@ verify-logs:
 
 verify-release-feed:
 	$(PYTHON) $(RELEASE_FEED_VERIFY) \
+		--inventory "$(INVENTORY)" \
+		--inventory "$(CONNECTION_INVENTORY)"
+
+verify-platform-addons:
+	$(PYTHON) $(PLATFORM_ADDONS_VERIFY) \
 		--inventory "$(INVENTORY)" \
 		--inventory "$(CONNECTION_INVENTORY)"
 

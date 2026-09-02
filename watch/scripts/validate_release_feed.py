@@ -16,6 +16,10 @@ CONTRACT = ROOT / "watch/contracts/release-feed-requirements.json"
 RULE = ROOT / "watch/monitoring/release-feed.rules.yaml"
 MANIFEST_ROOT = ROOT / "make/apps/release-feed/k8s/base"
 MAKE_CONTRACT = ROOT / "make/contracts/release-feed-secret-contract.json"
+TAR_SCRIPTS = ROOT / "tar/scripts"
+if str(TAR_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(TAR_SCRIPTS))
+import validate_platform_supply as platform_supply  # noqa: E402
 
 
 class ReleaseFeedWatchError(ValueError):
@@ -92,6 +96,7 @@ def validate(path: Path = CONTRACT) -> dict[str, Any]:
         document["environment"] == "environment-gcp",
         "release-feed WATCH environment changed",
     )
+    routing = platform_supply.validate_platform()["service_routing"]
     require(
         document["cluster"]
         == {
@@ -108,12 +113,20 @@ def validate(path: Path = CONTRACT) -> dict[str, Any]:
             "namespace": "release-feed",
             "name": "release-feed",
             "address": "10.77.0.222",
+            "type": "NodePort",
+            "node_port": 30444,
+            "routing_provider": "gcp-internal-proxy-network-load-balancer",
             "port": 443,
             "health_path": "/healthz",
             "metrics_path": "/metrics",
             "tls_server_name": "releases.shell.internal",
         },
         "release-feed WATCH service changed",
+    )
+    require(
+        routing["services"]["release_feed"]["address"] == document["service"]["address"]
+        and routing["services"]["release_feed"]["node_port"] == document["service"]["node_port"],
+        "release-feed routing contract changed",
     )
     require(
         document["workload"]
@@ -186,8 +199,9 @@ def validate(path: Path = CONTRACT) -> dict[str, Any]:
     policies = resources["networkpolicy.yaml"]
     require(
         service["metadata"]["namespace"] == "release-feed"
-        and service["spec"]["type"] == "LoadBalancer"
-        and service["spec"]["loadBalancerIP"] == "10.77.0.222"
+        and service["spec"]["type"] == "NodePort"
+        and service["spec"]["externalTrafficPolicy"] == "Cluster"
+        and service["spec"]["ports"][0]["nodePort"] == 30444
         and service["spec"]["selector"] == {"app.kubernetes.io/name": "release-feed"},
         "release-feed Service boundary changed",
     )

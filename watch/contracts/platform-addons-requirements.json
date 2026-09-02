@@ -1,0 +1,48 @@
+{
+  "description": "WATCH read-only policy and evidence contract for GCP platform add-ons.",
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "platform-addons-requirements",
+  "policy_owner": "watch",
+  "consumer_owners": [
+    "make",
+    "watch"
+  ],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "cluster": {
+    "name": "gcp",
+    "inventory_group": "gcp_k3s_servers",
+    "first_server": "gcp-k3s-01",
+    "first_server_address": "10.77.0.201",
+    "nodes": [
+      "gcp-k3s-01",
+      "gcp-k3s-02",
+      "gcp-k3s-03"
+    ]
+  },
+  "supply": "tar/manifests/platform-addons-supply.json",
+  "add_ons": {
+    "metallb": {
+      "namespace": "metallb-system",
+      "release": "metallb",
+      "service_advertisements": []
+    },
+    "longhorn": {
+      "namespace": "longhorn-system",
+      "release": "longhorn",
+      "data_path": "/var/lib/longhorn",
+      "storage_class": "longhorn",
+      "default": true,
+      "expected_nodes": 3,
+      "default_replica_count": 3
+    }
+  },
+  "evidence": [
+    "three declared GCP K3s nodes are Ready",
+    "MetalLB controller and speakers are ready without service advertisements",
+    "three Longhorn nodes have ready and schedulable disks",
+    "Longhorn is the only default storage class"
+  ],
+  "failure_policy": "read-only-diagnosis"
+}
