@@ -1,6 +1,6 @@
 {
   "expose": {
-    "type": "loadBalancer",
+    "type": "nodePort",
     "tls": {
       "enabled": true,
       "certSource": "secret",
@@ -8,8 +8,15 @@
         "secretName": "harbor-public-tls"
       }
     },
-    "loadBalancer": {
-      "IP": "10.77.0.221"
+    "nodePort": {
+      "ports": {
+        "http": {
+          "nodePort": 30080
+        },
+        "https": {
+          "nodePort": 30443
+        }
+      }
     }
   },
   "externalURL": "https://registry.shell.internal",

@@ -13,7 +13,7 @@ PLATFORM_LOCAL_ROOT ?= ../.local/tar/platform-addons
 INVENTORY ?= ../.local/ansible/inventory.json
 CONNECTION_INVENTORY ?= ../.local/ansible/connection-inventory.yml
 
-.PHONY: check test check-watch-supply check-watch-logs-supply check-platform-supply check-release-feed-supply stage-watch-logs stage-platform publish-platform-charts publish-platform-images publish-release-feed
+.PHONY: check test check-watch-supply check-watch-logs-supply check-platform-supply check-release-feed-supply stage-watch-logs stage-platform stage-platform-addons publish-platform-charts publish-platform-images publish-release-feed
 
 check: test check-platform-supply check-release-feed-supply
 
@@ -36,9 +36,10 @@ check-release-feed-supply:
 stage-watch-logs: check-watch-logs-supply
 	$(PYTHON) $(WATCH_LOGS_STAGER) --local-root "$(WATCH_LOGS_LOCAL_ROOT)"
 
-stage-platform:
-	@printf '%s\n' 'platform staging is blocked until hardened no-follow staging and size pins exist' >&2
-	@exit 2
+stage-platform-addons: check-platform-supply
+	$(PYTHON) $(PLATFORM_STAGER) --local-root "$(PLATFORM_LOCAL_ROOT)"
+
+stage-platform: stage-platform-addons
 
 publish-platform-charts:
 	@printf '%s\n' 'platform chart publication is blocked until Helm provenance, isolated credentials, and Argo image pins exist' >&2

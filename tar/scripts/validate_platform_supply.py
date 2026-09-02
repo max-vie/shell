@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import re
+import stat
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -48,7 +50,7 @@ def read_json(path: Path, label: str) -> dict[str, Any]:
     return cast(dict[str, Any], value)
 
 
-def validate_chart(chart: Any, label: str) -> None:
+def validate_chart(chart: Any, label: str, *, require_size: bool = False) -> None:
     require(isinstance(chart, dict), f"{label} must be an object")
     require(
         set(chart) >= {"repository", "name", "version", "source", "sha256"},
@@ -71,6 +73,93 @@ def validate_chart(chart: Any, label: str) -> None:
         isinstance(chart["source"], str) and chart["source"].startswith("https://"),
         f"{label} source must use HTTPS",
     )
+    if require_size:
+        require(
+            chart.get("redirect_hosts")
+            == ["github.com", "release-assets.githubusercontent.com"],
+            f"{label} redirect hosts changed",
+        )
+        require(
+            isinstance(chart.get("max_bytes"), int)
+            and chart["max_bytes"] >= 1024
+            and chart["max_bytes"] <= 64 * 1024 * 1024,
+            f"{label} size ceiling changed",
+        )
+
+
+def validate_service_routing(lock: dict[str, Any]) -> dict[str, Any]:
+    routing_value = lock.get("service_routing")
+    routing = cast(dict[str, Any], routing_value)
+    require(isinstance(routing, dict), "platform service routing is missing")
+    require(
+        routing.get("provider") == "gcp-internal-proxy-network-load-balancer"
+        and routing.get("region") == "europe-west4"
+        and routing.get("protocol") == "TCP"
+        and routing.get("frontend_port") == 443
+        and routing.get("global_access") is False,
+        "platform service routing changed",
+    )
+    proxy_value = routing.get("proxy_only_subnet")
+    proxy = cast(dict[str, Any], proxy_value)
+    require(
+        isinstance(proxy, dict)
+        and proxy == {
+            "name": "shell-shared-proxy-only",
+            "cidr": "10.77.2.0/23",
+        },
+        "platform proxy-only subnet changed",
+    )
+    try:
+        proxy_network = ipaddress.ip_network(proxy["cidr"], strict=True)
+    except (TypeError, ValueError) as error:
+        raise PlatformSupplyError("platform proxy-only CIDR is invalid") from error
+    require(
+        not proxy_network.overlaps(ipaddress.ip_network("10.77.0.0/24"))
+        and not proxy_network.overlaps(ipaddress.ip_network("10.66.0.0/24")),
+        "platform proxy-only CIDR overlaps a declared network",
+    )
+    services_value = routing.get("services")
+    services = cast(dict[str, dict[str, Any]], services_value)
+    require(
+        isinstance(services, dict) and set(services) == {"harbor", "release_feed"},
+        "platform service routing set changed",
+    )
+    expected = {
+        "harbor": {
+            "address": "10.77.0.221",
+            "backend_port_name": "harbor-https",
+            "backend_port": 30443,
+            "node_port": 30443,
+            "health_check_port": 30443,
+        },
+        "release_feed": {
+            "address": "10.77.0.222",
+            "backend_port_name": "release-feed-https",
+            "backend_port": 30444,
+            "node_port": 30444,
+            "health_check_port": 30444,
+        },
+    }
+    require(services == expected, "platform service routing values changed")
+    addresses = [ipaddress.ip_address(item["address"]) for item in services.values()]
+    require(
+        all(address in ipaddress.ip_network("10.77.0.0/24") for address in addresses)
+        and len(set(addresses)) == len(addresses),
+        "platform service addresses are invalid",
+    )
+    ports = [item["node_port"] for item in services.values()]
+    require(
+        len(set(ports)) == len(ports)
+        and all(30000 <= port <= 32767 for port in ports),
+        "platform NodePorts are invalid",
+    )
+    require(
+        routing["services"]["harbor"]["address"] == lock["service_addresses"]["harbor"]
+        and routing["services"]["release_feed"]["address"]
+        == lock["service_addresses"]["release_feed"],
+        "platform service address handoff changed",
+    )
+    return routing
 
 
 def validate_platform(path: Path = PLATFORM_LOCK) -> dict[str, Any]:
@@ -81,6 +170,12 @@ def validate_platform(path: Path = PLATFORM_LOCK) -> dict[str, Any]:
     )
     require(lock["policy_owner"] == "tar", "TAR must own platform add-on supply")
     require(lock["execution_owner"] == "make", "MAKE must consume platform supply")
+    require(
+        lock.get("consumer_owners") == ["init", "make"]
+        and lock.get("routing_owner") == "init"
+        and lock.get("workload_owner") == "make",
+        "platform consumer ownership changed",
+    )
     require(lock["environment"] == "environment-gcp", "platform environment changed")
     require(lock["k3s_version"] == "v1.34.10+k3s1", "K3s version changed")
     require(
@@ -98,7 +193,8 @@ def validate_platform(path: Path = PLATFORM_LOCK) -> dict[str, Any]:
     )
     require(set(lock["charts"]) == {"metallb", "longhorn"}, "platform chart set changed")
     for name, chart in lock["charts"].items():
-        validate_chart(chart, f"platform {name} chart")
+        validate_chart(chart, f"platform {name} chart", require_size=True)
+    validate_service_routing(lock)
     images = lock["runtime_image_digests"]
     require(
         isinstance(images, dict) and bool(images),
@@ -159,8 +255,9 @@ def validate_harbor(path: Path = HARBOR_LOCK) -> dict[str, Any]:
     )
     values = read_json(HARBOR_VALUES, "Harbor full values")
     require(
-        values["expose"]["loadBalancer"]["IP"] == "10.77.0.221",
-        "Harbor values address changed",
+        values["expose"]["type"] == "nodePort"
+        and values["expose"]["nodePort"]["ports"]["https"]["nodePort"] == 30443,
+        "Harbor NodePort values changed",
     )
     require(
         values["externalURL"] == "https://registry.shell.internal", "Harbor URL changed"
@@ -230,20 +327,25 @@ def validate_services(path: Path = SERVICE_LOCK) -> dict[str, Any]:
 
 def validate_staged(local_root: Path) -> None:
     validate_platform()
-    validate_services()
-    validate_harbor()
-    for lock_path in (PLATFORM_LOCK, SERVICE_LOCK):
-        lock = read_json(lock_path, "supply")
-        for chart in lock["charts"].values():
-            path = local_root / "charts" / f"{chart['name']}-{chart['version']}.tgz"
-            require(
-                path.is_file() and not path.is_symlink(),
-                f"staged chart missing: {path.name}",
-            )
-            require(
-                hashlib.sha256(path.read_bytes()).hexdigest() == chart["sha256"],
-                f"staged chart checksum changed: {path.name}",
-            )
+    lock = read_json(PLATFORM_LOCK, "platform add-on supply")
+    for chart in lock["charts"].values():
+        path = local_root / "charts" / f"{chart['name']}-{chart['version']}.tgz"
+        require(
+            path.is_file() and not path.is_symlink(),
+            f"staged chart missing: {path.name}",
+        )
+        require(
+            stat.S_IMODE(path.stat().st_mode) == 0o600,
+            f"staged chart mode changed: {path.name}",
+        )
+        require(
+            path.stat().st_size <= chart["max_bytes"],
+            f"staged chart exceeds size ceiling: {path.name}",
+        )
+        require(
+            hashlib.sha256(path.read_bytes()).hexdigest() == chart["sha256"],
+            f"staged chart checksum changed: {path.name}",
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
