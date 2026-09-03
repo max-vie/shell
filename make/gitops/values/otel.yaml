@@ -1,0 +1,128 @@
+---
+# MAKE-owned OpenTelemetry Collector values. TAR supplies the chart and image
+# pins; WATCH owns the tracing policy and later read-only evidence.
+# yamllint disable rule:line-length
+fullnameOverride: shell-otel
+mode: deployment
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: 0.159.0
+  digest: sha256:1f2c54a30e713fac6b3ae77a1ec84010c2007e29ced8ec666214fc2f6739c1cc
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {cpu: 500m, memory: 512Mi}
+
+podSecurityContext:
+  runAsUser: 10001
+  runAsGroup: 10001
+  runAsNonRoot: true
+  seccompProfile: {type: RuntimeDefault}
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: {drop: [ALL]}
+
+serviceAccount:
+  automountServiceAccountToken: false
+
+presets:
+  logsCollection: {enabled: false}
+  hostMetrics: {enabled: false}
+  kubernetesAttributes: {enabled: false}
+  kubeletMetrics: {enabled: false}
+  kubernetesEvents: {enabled: false}
+  kubernetesObjects: {enabled: false}
+  clusterMetrics: {enabled: false}
+  profiling: {enabled: false}
+
+alternateConfig:
+  extensions:
+    health_check:
+      endpoint: ${env:MY_POD_IP}:13133
+  receivers:
+    otlp:
+      protocols:
+        grpc: {}
+        http: {}
+  processors:
+    memory_limiter:
+      check_interval: 5s
+      limit_mib: 384
+    batch: {}
+  exporters:
+    otlphttp/tempo:
+      endpoint: http://tempo.monitoring.svc.cluster.local:4318
+    prometheus:
+      endpoint: 0.0.0.0:8889
+  service:
+    extensions: [health_check]
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlphttp/tempo]
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [prometheus]
+
+ports:
+  otlp:
+    enabled: true
+    containerPort: 4317
+    servicePort: 4317
+    protocol: TCP
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 4318
+    protocol: TCP
+  jaeger-compact: {enabled: false}
+  jaeger-thrift: {enabled: false}
+  jaeger-grpc: {enabled: false}
+  zipkin: {enabled: false}
+  metrics:
+    enabled: true
+    containerPort: 8889
+    servicePort: 8889
+    protocol: TCP
+
+service:
+  enabled: true
+  type: ClusterIP
+
+ingress:
+  enabled: false
+httproute:
+  enabled: false
+
+serviceMonitor:
+  enabled: true
+  extraLabels: {release: shell-watch}
+
+networkPolicy:
+  enabled: true
+  allowIngressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+  egressRules:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {port: 4318, protocol: TCP}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+# yamllint enable rule:line-length

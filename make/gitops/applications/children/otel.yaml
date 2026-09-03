@@ -1,0 +1,35 @@
+---
+# yamllint disable rule:line-length
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: watch-opentelemetry
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "60"
+spec:
+  project: shell-platform-services
+  sources:
+    - repoURL: registry.shell.internal/shell/charts
+      chart: opentelemetry-collector
+      targetRevision: 0.165.0
+      helm:
+        releaseName: shell-otel
+        valueFiles:
+          - $values/gitops/values/otel.yaml
+    - repoURL: https://forgejo.shell.internal/shell/make.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+# yamllint enable rule:line-length

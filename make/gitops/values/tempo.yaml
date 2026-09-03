@@ -1,0 +1,110 @@
+---
+# MAKE-owned Tempo values. TAR supplies the chart and image pins; WATCH owns
+# the tracing policy and later read-only evidence.
+# yamllint disable rule:line-length
+fullnameOverride: tempo
+replicas: 1
+
+tempo:
+  registry: docker.io
+  repository: grafana/tempo
+  tag: "2.9.0@sha256:65a5789759435f1ef696f1953258b9bbdb18eb571d5ce711ff812d2e128288a4"
+  pullPolicy: IfNotPresent
+  memBallastSizeMbs: 0
+  reportingEnabled: false
+  retention: 24h
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  server:
+    http_listen_port: 3200
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+    jaeger:
+      protocols:
+        grpc: {endpoint: null}
+        thrift_binary: {endpoint: null}
+        thrift_compact: {endpoint: null}
+        thrift_http: {endpoint: null}
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+  livenessProbe:
+    httpGet: {path: /ready, port: 3200}
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+  readinessProbe:
+    httpGet: {path: /ready, port: 3200}
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: {drop: [ALL]}
+
+tempoQuery:
+  enabled: false
+
+service:
+  type: ClusterIP
+
+serviceAccount:
+  automountServiceAccountToken: false
+
+serviceMonitor:
+  enabled: true
+  additionalLabels: {release: shell-watch}
+
+persistence:
+  enabled: true
+  storageClassName: longhorn
+  accessModes: [ReadWriteOnce]
+  size: 2Gi
+
+networkPolicy:
+  enabled: false
+
+config: |
+  memberlist:
+    cluster_label: "tempo.monitoring"
+  multitenancy_enabled: false
+  usage_report:
+    reporting_enabled: false
+  compactor:
+    compaction:
+      block_retention: 24h
+  distributor:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+  ingester: {}
+  server:
+    http_listen_port: 3200
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/traces
+      wal:
+        path: /var/tempo/wal
+  querier: {}
+  query_frontend: {}
+  overrides:
+    defaults: {}
+    per_tenant_override_config: /conf/overrides.yaml
+# yamllint enable rule:line-length
