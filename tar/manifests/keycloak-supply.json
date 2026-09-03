@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "keycloak-supply",
+  "description": "Source-only TAR image pins for the Keycloak login service.",
+  "policy_owner": "tar",
+  "execution_owner": "make",
+  "proof_status": "source-reference-only",
+  "environment": "environment-gcp",
+  "staging": {
+    "mode": "digest-locked-source-references",
+    "network_acquisition_owner": "tar",
+    "consumer_network_acquisition": false,
+    "runtime_reference_mode": "upstream-digest"
+  },
+  "images": {
+    "keycloak": {
+      "source": "quay.io/keycloak/keycloak:26.7.2",
+      "runtime": "quay.io/keycloak/keycloak:26.7.2@sha256:831330513f55695572286e521f94fcd3c7e285250ed5b848090265a33192f669",
+      "platform": "linux/amd64",
+      "digest": "sha256:831330513f55695572286e521f94fcd3c7e285250ed5b848090265a33192f669"
+    },
+    "postgresql": {
+      "source": "docker.io/library/postgres:17.5-bookworm",
+      "runtime": "docker.io/library/postgres:17.5-bookworm@sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4",
+      "platform": "linux/amd64",
+      "digest": "sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4"
+    }
+  }
+}
