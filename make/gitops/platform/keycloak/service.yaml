@@ -1,0 +1,35 @@
+---
+# yamllint disable rule:line-length
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: shell-identity
+  labels:
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/part-of: shell-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: keycloak
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-management
+  namespace: shell-identity
+  labels:
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/part-of: shell-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: keycloak
+  ports:
+    - name: management
+      port: 9000
+      targetPort: management

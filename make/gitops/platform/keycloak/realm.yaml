@@ -1,0 +1,83 @@
+---
+# yamllint disable rule:line-length
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: shell-identity
+  labels:
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/part-of: shell-platform
+data:
+  shell-realm.json: |
+    {
+      "id": "shell",
+      "realm": "shell",
+      "enabled": true,
+      "sslRequired": "external",
+      "registrationAllowed": false,
+      "resetPasswordAllowed": false,
+      "roles": {
+        "realm": [
+          {"name": "platform-admin"},
+          {"name": "platform-operator"},
+          {"name": "auditor"}
+        ]
+      },
+      "groups": [
+        {"name": "platform-admins", "realmRoles": ["platform-admin"]},
+        {"name": "platform-operators", "realmRoles": ["platform-operator"]},
+        {"name": "auditors", "realmRoles": ["auditor"]}
+      ],
+      "components": {
+        "org.keycloak.storage.UserStorageProvider": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "freeipa-ldap",
+            "providerId": "ldap",
+            "providerType": "org.keycloak.storage.UserStorageProvider",
+            "config": {
+              "enabled": ["true"],
+              "connectionUrl": ["ldaps://identity-01.shell.internal:636"],
+              "usersDn": ["cn=users,cn=accounts,dc=shell,dc=internal"],
+              "bindDn": ["uid=keycloak-bind,cn=users,cn=accounts,dc=shell,dc=internal"],
+              "bindCredential": ["${KEYCLOAK_LDAP_BIND_PASSWORD}"],
+              "authType": ["simple"],
+              "editMode": ["READ_ONLY"],
+              "usernameLDAPAttribute": ["uid"],
+              "rdnLDAPAttribute": ["uid"],
+              "uuidLDAPAttribute": ["ipaUniqueID"],
+              "userObjectClasses": ["inetOrgPerson,organizationalPerson"],
+              "customUserSearchFilter": ["(!(uid=keycloak-bind))"],
+              "importEnabled": ["true"],
+              "syncRegistrations": ["false"],
+              "useTruststoreSpi": ["always"],
+              "connectionPooling": ["true"],
+              "pagination": ["true"],
+              "searchScope": ["1"]
+            }
+          }
+        ],
+        "org.keycloak.storage.ldap.mappers.LDAPStorageMapper": [
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "name": "freeipa-groups",
+            "providerId": "group-ldap-mapper",
+            "providerType": "org.keycloak.storage.ldap.mappers.LDAPStorageMapper",
+            "parentId": "00000000-0000-4000-8000-000000000001",
+            "config": {
+              "groups.dn": ["cn=groups,cn=accounts,dc=shell,dc=internal"],
+              "group.name.ldap.attribute": ["cn"],
+              "group.object.classes": ["groupOfNames"],
+              "membership.ldap.attribute": ["member"],
+              "membership.attribute.type": ["DN"],
+              "mode": ["READ_ONLY"],
+              "preserve.group.inheritance": ["false"],
+              "user.roles": ["false"],
+              "drop.non.existing.groups.during.sync": ["false"],
+              "groups.path": ["/"]
+            }
+          }
+        ]
+      }
+    }

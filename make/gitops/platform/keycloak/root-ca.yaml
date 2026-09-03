@@ -1,0 +1,15 @@
+---
+# yamllint disable rule:line-length
+# The private FreeIPA CA is supplied by the guarded MAKE secret handoff.
+# This source marker documents the ConfigMap identity without carrying CA data.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shell-freeipa-ca
+  namespace: shell-identity
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+    shell.platform/managed-by: make-keycloak-secrets
+  annotations:
+    shell.platform/source-only: "true"
+data: {}

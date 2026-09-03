@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "keycloak-login-requirements",
+  "description": "Source-only MAKE contract for the cluster-local Keycloak login service.",
+  "policy_owner": "make",
+  "producer_owners": ["sudo", "tar", "init"],
+  "consumer_owners": ["make"],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "source_contracts": {
+    "identity": "sudo/access/keycloak-profile.json",
+    "inputs": "sudo/secrets/keycloak-input-contract.json",
+    "supply": "tar/manifests/keycloak-supply.json",
+    "certificate": "make/cert-manager/cluster-issuer.json"
+  },
+  "workload": {
+    "namespace": "shell-identity",
+    "realm": "shell",
+    "service": {
+      "name": "keycloak",
+      "type": "ClusterIP",
+      "hostname": "keycloak.shell-identity.svc.cluster.local",
+      "port": 443,
+      "target_port": 8443
+    },
+    "certificate": {
+      "name": "keycloak-public-tls",
+      "secret_name": "keycloak-public-tls",
+      "dns_names": [
+        "keycloak.shell-identity.svc",
+        "keycloak.shell-identity.svc.cluster.local"
+      ],
+      "issuer": "shell-cluster-intermediate"
+    },
+    "database": {
+      "statefulset": "keycloak-postgresql",
+      "service": "keycloak-postgresql",
+      "replicas": 1,
+      "storage_class": "longhorn",
+      "storage": "8Gi"
+    },
+    "ldap": {
+      "host": "identity-01.shell.internal",
+      "address": "10.77.0.210",
+      "port": 636,
+      "tls": "required",
+      "mode": "READ_ONLY",
+      "bind_principal": "keycloak-bind",
+      "users_dn": "cn=users,cn=accounts,dc=shell,dc=internal",
+      "groups_dn": "cn=groups,cn=accounts,dc=shell,dc=internal"
+    },
+    "secrets": [
+      "keycloak-database",
+      "keycloak-bootstrap",
+      "keycloak-runtime"
+    ],
+    "external_endpoint": false
+  },
+  "excluded_fields": [
+    "external_service_address",
+    "node_port",
+    "load_balancer",
+    "ingress",
+    "plaintext_credentials",
+    "kubeconfig_data"
+  ]
+}

@@ -1,0 +1,27 @@
+---
+# yamllint disable rule:line-length
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: keycloak-public-tls
+  namespace: shell-identity
+  labels:
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/part-of: shell-platform
+spec:
+  secretName: keycloak-public-tls
+  privateKey:
+    rotationPolicy: Always
+    algorithm: RSA
+    size: 2048
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  dnsNames:
+    - keycloak.shell-identity.svc
+    - keycloak.shell-identity.svc.cluster.local
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: shell-cluster-intermediate

@@ -1,0 +1,27 @@
+---
+# yamllint disable rule:line-length
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shell-keycloak
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  project: shell-platform-services
+  source:
+    repoURL: https://forgejo.shell.internal/shell/make.git
+    targetRevision: main
+    path: gitops/platform/keycloak
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shell-identity
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
