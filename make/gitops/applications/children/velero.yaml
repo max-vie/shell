@@ -1,0 +1,38 @@
+---
+# yamllint disable rule:line-length
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shell-velero
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "40"
+spec:
+  project: shell-platform-services
+  sources:
+    - repoURL: registry.shell.internal/shell/charts
+      chart: velero
+      targetRevision: 12.1.0
+      helm:
+        releaseName: velero
+        valueFiles:
+          - $values/gitops/values/velero.yaml
+    - repoURL: https://forgejo.shell.internal/shell/make.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://forgejo.shell.internal/shell/make.git
+      targetRevision: main
+      path: gitops/platform/velero
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: velero
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+      - CreateNamespace=true
+# yamllint enable rule:line-length

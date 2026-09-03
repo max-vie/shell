@@ -1,0 +1,81 @@
+---
+# yamllint disable rule:line-length
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: velero-default-deny
+  namespace: velero
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: velero-prometheus-ingress
+  namespace: velero
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8085
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: velero-kube-api-egress
+  namespace: velero
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 10.77.0.200/29
+      ports:
+        - protocol: TCP
+          port: 6443
+---
+# GCS endpoints are allowed by Cilium FQDN policy below; this source remains
+# a standard NetworkPolicy default-deny boundary for non-Cilium clusters.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: velero-gcs-egress
+  namespace: velero
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            "k8s:io.kubernetes.pod.namespace": kube-system
+            "k8s:k8s-app": kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: ANY}
+          rules:
+            dns:
+              - {matchPattern: "*"}
+    - toFQDNs:
+        - matchName: storage.googleapis.com
+        - matchName: oauth2.googleapis.com
+      toPorts:
+        - ports:
+            - {port: "443", protocol: TCP}
+    - toEntities: [kube-apiserver]
+# yamllint enable rule:line-length

@@ -1,0 +1,13 @@
+---
+# yamllint disable rule:line-length
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: velero
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+    shell.platform/policy: audit
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+# yamllint enable rule:line-length

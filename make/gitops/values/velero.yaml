@@ -1,0 +1,96 @@
+---
+# MAKE-owned Velero values. TAR supplies the chart and digest pins; INIT
+# supplies the GCS bucket and credential handoff.
+# yamllint disable rule:line-length
+image:
+  repository: docker.io/velero/velero
+  tag: v1.18.2
+  digest: sha256:37396519f399536e5f01427d723565ae69294ec3fb5625cf1c87c09eaa9de16b
+  pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+initContainers:
+  - name: velero-plugin-for-gcp
+    image: docker.io/velero/velero-plugin-for-gcp:v1.14.2@sha256:f4c0b7d1e69f7dbc721e2dc7eca20a9720d06f7c5e021ccc3cd57df6bb505f7b
+    imagePullPolicy: IfNotPresent
+    volumeMounts:
+      - mountPath: /target
+        name: plugins
+    securityContext:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 512Mi}
+
+credentials:
+  useSecret: true
+  existingSecret: velero-object-store
+
+configuration:
+  uploaderType: kopia
+  features: EnableCSI
+  defaultSnapshotMoveData: true
+  defaultVolumesToFsBackup: false
+  defaultBackupTTL: 720h
+  backupStorageLocation:
+    - name: default
+      provider: gcp
+      bucket: replace-with-unique-shell-velero-bucket
+      default: true
+      credential:
+        name: velero-object-store
+        key: cloud
+      annotations:
+        argocd.argoproj.io/sync-options: Replace=true
+  volumeSnapshotLocation: []
+
+upgradeCRDs: false
+cleanUpCRDs: false
+snapshotsEnabled: false
+backupsEnabled: true
+deployNodeAgent: true
+
+nodeAgent:
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile: {type: RuntimeDefault}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: {drop: [ALL]}
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: shell-watch
+
+schedules:
+  release-feed-daily:
+    schedule: "17 1 * * *"
+    template:
+      ttl: 720h
+      includedNamespaces: [release-feed]
+      snapshotVolumes: true
+      defaultVolumesToFsBackup: false
+# yamllint enable rule:line-length

@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "velero-gcs-requirements",
+  "description": "Source-only MAKE contract for GCS-backed Velero backups in GCP.",
+  "policy_owner": "make",
+  "producer_owners": ["sudo", "tar", "init"],
+  "consumer_owners": ["make", "watch"],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "source_contracts": {
+    "credentials": "sudo/secrets/velero-gcs-input-contract.json",
+    "supply": "tar/manifests/kubernetes-ecosystem-supply.json",
+    "gcs_root": "init/opentofu/gcs-backup",
+    "cluster_trust": "make/contracts/cluster-trust-requirements.json"
+  },
+  "backup": {
+    "namespace": "velero",
+    "release": "velero",
+    "chart": "velero",
+    "chart_version": "12.1.0",
+    "provider": "gcp",
+    "bucket_name": "replace-with-unique-shell-velero-bucket",
+    "credential_secret": "velero-object-store",
+    "credential_key": "cloud",
+    "uploader": "kopia",
+    "features": ["EnableCSI"],
+    "default_snapshot_move_data": true,
+    "default_volumes_to_fs_backup": false,
+    "snapshots_enabled": false,
+    "node_agent_enabled": true,
+    "schedule": {
+      "name": "release-feed-daily",
+      "cron": "17 1 * * *",
+      "namespace": "release-feed",
+      "ttl": "720h"
+    }
+  },
+  "gcs": {
+    "region": "europe-west4",
+    "uniform_bucket_level_access": true,
+    "public_access_prevention": "enforced",
+    "force_destroy": false,
+    "versioning": true,
+    "iam_role": "roles/storage.objectAdmin"
+  },
+  "snapshot": {
+    "driver": "driver.longhorn.io",
+    "class": "longhorn-snapshot",
+    "type": "snap",
+    "deletion_policy": "Delete",
+    "controller_namespace": "kube-system"
+  },
+  "excluded_fields": [
+    "private_key",
+    "service_account_json",
+    "kubeconfig_data",
+    "live_backup_evidence",
+    "external_object_store"
+  ]
+}
