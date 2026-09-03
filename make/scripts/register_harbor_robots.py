@@ -265,7 +265,7 @@ def apply(inventory: list[Path], *, rotate: bool) -> None:
     connection = transport.resolve_connection(inventory)
     values = register(connection, rotate=rotate)
     puller = robot(values, "puller")
-    for namespace in ("release-feed", "openbao", "argocd"):
+    for namespace in ("release-feed", "openbao", "argocd", "kyverno"):
         transport.ssh(
             "set -eu; sudo -E KUBECONFIG=/etc/rancher/k3s/k3s.yaml k3s kubectl "
             f"create namespace {namespace} --dry-run=client -o yaml | "
@@ -281,6 +281,7 @@ def apply(inventory: list[Path], *, rotate: bool) -> None:
                 secret("shell-registry-pull", *puller, "release-feed"),
                 secret("shell-registry-pull", *puller, "openbao"),
                 secret("shell-registry-pull", *puller, "argocd"),
+                secret("shell-registry-pull", *puller, "kyverno"),
             ]
         )
         + "\n"

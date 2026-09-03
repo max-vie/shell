@@ -24,7 +24,7 @@ class TestMonitoringContract(unittest.TestCase):
     def test_current_contract_validates(self) -> None:
         document = validator.validate_contract()
         self.assertEqual("cluster-monitoring-requirements", document["contract_id"])
-        self.assertEqual("3.0.0", document["contract_version"])
+        self.assertEqual("3.1.0", document["contract_version"])
         self.assertEqual("environment-gcp", document["environment"])
         self.assertEqual("gcp-k3s-01", document["cluster"]["first_server"])
         self.assertEqual(["k3s", "helm"], document["required_guest_tools"])

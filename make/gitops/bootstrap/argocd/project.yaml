@@ -1,3 +1,4 @@
+---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -15,11 +16,37 @@ spec:
       namespace: argocd
     - server: https://kubernetes.default.svc
       namespace: openbao
+    - server: https://kubernetes.default.svc
+      namespace: shell-identity
+    - server: https://kubernetes.default.svc
+      namespace: kyverno
+    - server: https://kubernetes.default.svc
+      namespace: shell-trust
+    - server: https://kubernetes.default.svc
+      namespace: velero
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
+    - server: https://kubernetes.default.svc
+      namespace: monitoring
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
     - group: cert-manager.io
       kind: Certificate
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: kyverno.io
+      kind: ClusterPolicy
+    - group: snapshot.storage.k8s.io
+      kind: VolumeSnapshotClass
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"

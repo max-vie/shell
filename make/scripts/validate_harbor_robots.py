@@ -56,6 +56,7 @@ def validate(path: Path = CONTRACT) -> dict[str, Any]:
             "private_handoff",
             "robots",
             "kubernetes_secrets",
+            "platform_namespaces",
         },
         "Harbor robot contract shape changed",
     )
@@ -109,6 +110,11 @@ def validate(path: Path = CONTRACT) -> dict[str, Any]:
         document["kubernetes_secrets"]
         == {"release-feed": "release-feed-pull", "platform": "shell-registry-pull"},
         "Harbor robot Kubernetes secret names changed",
+    )
+    require(
+        document["platform_namespaces"]
+        == ["argocd", "kyverno", "openbao", "release-feed"],
+        "Harbor robot platform namespace set changed",
     )
     serialized = json.dumps(document)
     require(

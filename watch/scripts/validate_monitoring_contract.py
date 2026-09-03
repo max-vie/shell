@@ -77,7 +77,7 @@ def validate_contract(
         "WATCH monitoring contract shape changed",
     )
     require(document["schema_version"] == "1.0", "WATCH schema version changed")
-    require(document["contract_version"] == "3.0.0", "WATCH contract version changed")
+    require(document["contract_version"] == "3.1.0", "WATCH contract version changed")
     require(
         document["contract_id"] == "cluster-monitoring-requirements",
         "WATCH contract ID changed",
@@ -197,7 +197,7 @@ def validate_contract(
             "access_boundary": {
                 "loki_authentication": "disabled",
                 "network_policy": "Alloy and Grafana to gateway to Loki only",
-                "network_policy_source": "init/ansible/vars/k3s.yml shell_k3s_disable_network_policy=false",
+                "network_policy_source": "init/ansible/vars/k3s.yml shell_k3s_disable_network_policy=true",
                 "alloy_service": False,
             },
             "namespace": "monitoring",
@@ -227,8 +227,8 @@ def validate_contract(
         repository_root / INIT_K3S_VARS_PATH.relative_to(REPOSITORY_ROOT)
     ).read_text(encoding="utf-8")
     require(
-        "shell_k3s_disable_network_policy: false" in k3s_vars,
-        "INIT K3s network policy controller is not enabled",
+        "shell_k3s_disable_network_policy: true" in k3s_vars,
+        "INIT K3s network policy controller is not disabled for Cilium",
     )
     supply_path = repository_root / "tar/manifests/watch-supply.json"
     supply_lock = watch_supply.validate_public(supply_path)

@@ -485,6 +485,7 @@ def _stage_binary(
     display_path: Path,
     expected_sha256: str,
     expected_size: int,
+    label: str = "K3s source binary",
 ) -> None:
     # Reuse is allowed only when both the staged output and the current source
     # still match the lock. This keeps repeated runs fail closed.
@@ -497,9 +498,8 @@ def _stage_binary(
         source_metadata,
     ):
         require(
-            _hash_descriptor(source, expected_size, "K3s source binary")
-            == expected_sha256,
-            "K3s source binary does not match the lock",
+            _hash_descriptor(source, expected_size, label) == expected_sha256,
+            f"{label} does not match the lock",
         )
         return
 
@@ -512,12 +512,12 @@ def _stage_binary(
                 source,
                 descriptor,
                 expected_size,
-                "K3s source binary",
+                label,
             )
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
-        require(digest == expected_sha256, "K3s source binary does not match the lock")
+        require(digest == expected_sha256, f"{label} does not match the lock")
         _publish_temporary(
             parent,
             temporary_name,

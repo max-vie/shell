@@ -130,7 +130,7 @@ def validate_manifests(contract: dict[str, Any], repository_root: Path) -> None:
     )
     values_path = cast(Path, read_reference(repository_root, manifests["values"], "cert-manager values"))
     values = values_path.read_text(encoding="utf-8")
-    require("networkPolicy:\n  enabled: false" in values, "cert-manager values must match the Flannel foundation")
+    require("networkPolicy:\n  enabled: false" in values, "cert-manager chart policy must remain explicit")
     require("latest" not in values, "cert-manager values must not use latest images")
     for digest in (
         "sha256:e370f7800a53078e9d74324287a7d52b553864e55f5b4e521f911c3f6c7da203",

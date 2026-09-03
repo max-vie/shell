@@ -37,5 +37,11 @@
   "kubernetes_secrets": {
     "release-feed": "release-feed-pull",
     "platform": "shell-registry-pull"
-  }
+  },
+  "platform_namespaces": [
+    "argocd",
+    "kyverno",
+    "openbao",
+    "release-feed"
+  ]
 }

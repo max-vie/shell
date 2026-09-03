@@ -58,6 +58,30 @@ PLATFORM_ADDONS_SCRIPT := $(MAKE_ROOT)/scripts/deploy_platform_addons.py
 PLATFORM_ADDONS_APPROVAL := environment-gcp/make/platform-addons
 PLATFORM_ADDONS_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/inventory.json
 PLATFORM_ADDONS_CONNECTION_INVENTORY := $(REPOSITORY_ROOT)/.local/ansible/connection-inventory.yml
+KEYCLOAK_VALIDATOR := $(MAKE_ROOT)/scripts/validate_keycloak.py
+KEYCLOAK_SECRETS_SCRIPT := $(MAKE_ROOT)/scripts/apply_keycloak_secrets.py
+KEYCLOAK_KUBECONFIG := $(REPOSITORY_ROOT)/.local/ansible/kubeconfig/gcp.yaml
+KEYCLOAK_INPUT := $(REPOSITORY_ROOT)/.local/sudo/keycloak/keycloak.sops.json
+KEYCLOAK_AGE_KEY := $(REPOSITORY_ROOT)/.local/sudo/keycloak/age-key.txt
+KEYCLOAK_FREEIPA_CA := $(REPOSITORY_ROOT)/.local/sudo/keycloak/freeipa-ca.crt
+KEYCLOAK_SECRETS_APPROVAL := environment-gcp/make/keycloak-secrets
+COSIGN_ADMISSION_VALIDATOR := $(MAKE_ROOT)/scripts/validate_cosign_admission.py
+COSIGN_TRUST_SCRIPT := $(MAKE_ROOT)/scripts/apply_cosign_trust.py
+COSIGN_TRUST_APPROVAL := environment-gcp/make/cosign-trust
+COSIGN_TRUST_INPUT := $(REPOSITORY_ROOT)/.local/sudo/kubernetes/cosign/cosign-public.sops.json
+COSIGN_TRUST_AGE_KEY := $(REPOSITORY_ROOT)/.local/sudo/kubernetes/cosign/age-key.txt
+COSIGN_TRUST_KUBECONFIG := $(REPOSITORY_ROOT)/.local/ansible/kubeconfig/gcp.yaml
+VELERO_VALIDATOR := $(MAKE_ROOT)/scripts/validate_velero.py
+VELERO_CREDENTIAL_SCRIPT := $(MAKE_ROOT)/scripts/apply_velero_credentials.py
+VELERO_CREDENTIALS := $(REPOSITORY_ROOT)/.local/init/gcs-backup/credentials.json
+VELERO_CREDENTIAL_KUBECONFIG := $(REPOSITORY_ROOT)/.local/ansible/kubeconfig/gcp.yaml
+VELERO_CREDENTIAL_APPROVAL := environment-gcp/make/velero-credentials
+KUBE_BENCH_RUNNER := $(MAKE_ROOT)/scripts/run_kube_bench.py
+KUBE_BENCH_KUBECONFIG := $(REPOSITORY_ROOT)/.local/ansible/kubeconfig/gcp.yaml
+KUBE_BENCH_APPROVAL := environment-gcp/make/kube-bench
+K6_RUNNER := $(MAKE_ROOT)/scripts/run_k6_load.py
+K6_KUBECONFIG := $(REPOSITORY_ROOT)/.local/ansible/kubeconfig/gcp.yaml
+K6_APPROVAL := environment-gcp/make/k6
 
 TRUST_VALIDATOR := $(MAKE_ROOT)/scripts/validate_cluster_trust.py
 INTERMEDIATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_cluster_intermediate.py
@@ -65,9 +89,9 @@ CERTIFICATE_SCRIPT := $(MAKE_ROOT)/scripts/apply_consumer_certificate.py
 SUPPLY_VALIDATOR := $(REPOSITORY_ROOT)/tar/scripts/validate_kubernetes_supply.py
 TRUST_VALUES := $(MAKE_ROOT)/cert-manager/values.yaml
 
-.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply logs-check logs-preview logs-apply platform-check platform-addons-check platform-addons-preview platform-addons-apply platform-addons-verify harbor-check harbor-preview harbor-apply harbor-robots-check harbor-robots-apply argocd-check argocd-preview argocd-apply argocd-root-apply argocd-verify argocd-repository-check argocd-repository-apply openbao-check openbao-preview openbao-bootstrap release-feed-check release-feed-preview release-feed-apply release-feed-verify watch-recovery-check watch-recovery-rule-preview watch-recovery-rule-apply watch-recovery-drill watch-recovery-restore
+.PHONY: check test trust-preview trust-template trust-apply trust-verify certificate-check certificate-apply certificate-verify delivery-handoff-check delivery-handoff delivery-handoff-validate forgejo-check forgejo-preview forgejo-apply forgejo-verify runner-check runner-register runner-apply runner-verify repository-check repository-register repository-rotate repository-verify monitoring-check monitoring-preview monitoring-apply logs-check logs-preview logs-apply platform-check platform-addons-check platform-addons-preview platform-addons-apply platform-addons-verify harbor-check harbor-preview harbor-apply harbor-robots-check harbor-robots-apply argocd-check argocd-preview argocd-apply argocd-root-apply argocd-verify argocd-repository-check argocd-repository-apply openbao-check openbao-preview openbao-bootstrap keycloak-check keycloak-secrets-check keycloak-secrets-apply keycloak-secrets-verify cosign-admission-check cosign-trust-check cosign-trust-apply cosign-trust-verify kyverno-check velero-check velero-credential-check velero-credential-apply velero-credential-verify kube-bench-check kube-bench-preview kube-bench-run k6-check k6-preview k6-run release-feed-check release-feed-preview release-feed-apply release-feed-verify watch-recovery-check watch-recovery-rule-preview watch-recovery-rule-apply watch-recovery-drill watch-recovery-restore
 
-check: test trust-preview repository-check monitoring-check logs-check platform-check platform-addons-check harbor-check argocd-check openbao-check release-feed-check
+check: test trust-preview repository-check monitoring-check logs-check platform-check platform-addons-check harbor-check argocd-check openbao-check keycloak-check keycloak-secrets-check cosign-admission-check cosign-trust-check kyverno-check velero-check velero-credential-check kube-bench-check k6-check release-feed-check
 
 test:
 	$(PYTHON) -m unittest discover -s $(MAKE_ROOT)/tests -p 'test_*.py'
@@ -308,6 +332,102 @@ openbao-preview: openbao-check
 openbao-bootstrap:
 	@printf '%s\n' 'OpenBao bootstrap is blocked: K3s API trust, HA join, and split custody are unresolved' >&2
 	@exit 2
+
+keycloak-check:
+	$(PYTHON) "$(KEYCLOAK_VALIDATOR)"
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_keycloak.py"
+
+keycloak-secrets-check:
+	$(PYTHON) "$(KEYCLOAK_SECRETS_SCRIPT)" check
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_keycloak_secrets.py"
+
+keycloak-secrets-apply:
+	@test "$(APPROVAL)" = "$(KEYCLOAK_SECRETS_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/keycloak-secrets' >&2; exit 2; }
+	$(PYTHON) "$(KEYCLOAK_SECRETS_SCRIPT)" apply \
+		--approval "$(APPROVAL)" \
+		--input "$(KEYCLOAK_INPUT)" \
+		--age-key "$(KEYCLOAK_AGE_KEY)" \
+		--freeipa-ca "$(KEYCLOAK_FREEIPA_CA)" \
+		--kubeconfig "$(KEYCLOAK_KUBECONFIG)"
+
+keycloak-secrets-verify:
+	$(PYTHON) "$(KEYCLOAK_SECRETS_SCRIPT)" verify \
+		--kubeconfig "$(KEYCLOAK_KUBECONFIG)"
+
+cosign-admission-check:
+	$(PYTHON) "$(COSIGN_ADMISSION_VALIDATOR)"
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_cosign_admission.py"
+
+cosign-trust-check:
+	$(PYTHON) "$(COSIGN_TRUST_SCRIPT)" check
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_cosign_trust.py"
+
+cosign-trust-apply:
+	@test "$(APPROVAL)" = "$(COSIGN_TRUST_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/cosign-trust' >&2; exit 2; }
+	$(PYTHON) "$(COSIGN_TRUST_SCRIPT)" apply \
+		--approval "$(APPROVAL)" \
+		--input "$(COSIGN_TRUST_INPUT)" \
+		--age-key "$(COSIGN_TRUST_AGE_KEY)" \
+		--kubeconfig "$(COSIGN_TRUST_KUBECONFIG)"
+
+cosign-trust-verify:
+	$(PYTHON) "$(COSIGN_TRUST_SCRIPT)" verify \
+		--input "$(COSIGN_TRUST_INPUT)" \
+		--age-key "$(COSIGN_TRUST_AGE_KEY)" \
+		--kubeconfig "$(COSIGN_TRUST_KUBECONFIG)"
+
+kyverno-check: cosign-admission-check
+
+velero-check:
+	$(PYTHON) "$(VELERO_VALIDATOR)"
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_velero.py"
+
+velero-credential-check:
+	$(PYTHON) "$(VELERO_CREDENTIAL_SCRIPT)" check
+	$(PYTHON) -m unittest "$(MAKE_ROOT)/tests/test_velero_credentials.py"
+
+velero-credential-apply:
+	@test "$(APPROVAL)" = "$(VELERO_CREDENTIAL_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/velero-credentials' >&2; exit 2; }
+	$(PYTHON) "$(VELERO_CREDENTIAL_SCRIPT)" apply \
+		--approval "$(APPROVAL)" \
+		--credentials "$(VELERO_CREDENTIALS)" \
+		--kubeconfig "$(VELERO_CREDENTIAL_KUBECONFIG)"
+
+velero-credential-verify:
+	$(PYTHON) "$(VELERO_CREDENTIAL_SCRIPT)" verify \
+		--kubeconfig "$(VELERO_CREDENTIAL_KUBECONFIG)"
+
+kube-bench-check:
+	$(PYTHON) "$(REPOSITORY_ROOT)/watch/scripts/kube_bench.py"
+	$(PYTHON) -m unittest discover -s "$(REPOSITORY_ROOT)/watch/tests" -p 'test_security_audits.py'
+
+kube-bench-preview: kube-bench-check
+	$(PYTHON) "$(KUBE_BENCH_RUNNER)" preview
+
+kube-bench-run:
+	@test "$(APPROVAL)" = "$(KUBE_BENCH_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/kube-bench' >&2; exit 2; }
+	@test -n "$(EVIDENCE)" || { printf '%s\n' 'EVIDENCE is required' >&2; exit 2; }
+	$(PYTHON) "$(KUBE_BENCH_RUNNER)" run \
+		--approval "$(APPROVAL)" \
+		--kubeconfig "$(KUBE_BENCH_KUBECONFIG)" \
+		--evidence "$(EVIDENCE)" \
+		$(if $(RUN_ID),--run-id "$(RUN_ID)",)
+
+k6-check:
+	$(PYTHON) "$(REPOSITORY_ROOT)/watch/scripts/k6_load.py"
+	$(PYTHON) -m unittest discover -s "$(REPOSITORY_ROOT)/watch/tests" -p 'test_security_audits.py'
+
+k6-preview: k6-check
+	$(PYTHON) "$(K6_RUNNER)" preview
+
+k6-run:
+	@test "$(APPROVAL)" = "$(K6_APPROVAL)" || { printf '%s\n' 'APPROVAL must be environment-gcp/make/k6' >&2; exit 2; }
+	@test -n "$(EVIDENCE)" || { printf '%s\n' 'EVIDENCE is required' >&2; exit 2; }
+	$(PYTHON) "$(K6_RUNNER)" run \
+		--approval "$(APPROVAL)" \
+		--kubeconfig "$(K6_KUBECONFIG)" \
+		--evidence "$(EVIDENCE)" \
+		$(if $(RUN_ID),--run-id "$(RUN_ID)",)
 
 release-feed-check:
 	$(PYTHON) "$(RELEASE_FEED_TAR_VALIDATOR)"

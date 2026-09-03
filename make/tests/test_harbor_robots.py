@@ -23,6 +23,7 @@ class HarborRobotTests(unittest.TestCase):
     def test_robot_contract_validates_without_values(self) -> None:
         document = module.validate()
         self.assertEqual(document["endpoint"]["address"], "10.77.0.221")
+        self.assertIn("kyverno", document["platform_namespaces"])
         self.assertNotIn("password", str(document).lower())
 
     def test_duplicate_and_unknown_fields_are_rejected(self) -> None:

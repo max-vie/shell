@@ -58,6 +58,20 @@ class ArgoSourceTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("release-feed", source)
 
+    def test_keycloak_namespace_is_an_allowed_downstream_destination(self) -> None:
+        project = module.yaml.safe_load(
+            (ROOT / "make/gitops/bootstrap/argocd/project.yaml").read_text(
+                encoding="utf-8"
+            )
+        )
+        namespaces = {
+            item["namespace"] for item in project["spec"]["destinations"]
+        }
+        self.assertIn("shell-identity", namespaces)
+        self.assertIn("kyverno", namespaces)
+        self.assertIn("shell-trust", namespaces)
+        self.assertIn("monitoring", namespaces)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "contract_version": "3.0.0",
+  "contract_version": "3.1.0",
   "contract_id": "cluster-monitoring-requirements",
   "description": "WATCH source requirements for the GCP K3s metrics, logs, and Grafana slices.",
   "policy_owner": "watch",
@@ -81,7 +81,7 @@
     "access_boundary": {
       "loki_authentication": "disabled",
       "network_policy": "Alloy and Grafana to gateway to Loki only",
-      "network_policy_source": "init/ansible/vars/k3s.yml shell_k3s_disable_network_policy=false",
+      "network_policy_source": "init/ansible/vars/k3s.yml shell_k3s_disable_network_policy=true",
       "alloy_service": false
     },
     "namespace": "monitoring",

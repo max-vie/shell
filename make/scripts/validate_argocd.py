@@ -56,10 +56,6 @@ def validate() -> None:
     require(
         values.get("dex", {}).get("enabled") is False, "Argo Dex must stay disabled"
     )
-    require("oidc" not in str(values).lower(), "Argo OIDC is outside this slice")
-    require(
-        "keycloak" not in str(values).lower(), "Argo Keycloak is outside this slice"
-    )
     require(isinstance(project, dict), "Argo project must be a mapping")
     spec = project.get("spec", {})
     require(
@@ -72,7 +68,17 @@ def validate() -> None:
     )
     destinations = spec.get("destinations", [])
     require(
-        {item.get("namespace") for item in destinations} == {"argocd", "openbao"},
+        {item.get("namespace") for item in destinations}
+        == {
+            "argocd",
+            "openbao",
+            "shell-identity",
+            "kyverno",
+            "shell-trust",
+            "velero",
+            "kube-system",
+            "monitoring",
+        },
         "Argo destination allow-list changed",
     )
     root = ROOT_APPLICATION.read_text(encoding="utf-8")

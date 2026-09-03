@@ -1,7 +1,7 @@
 ---
 # MAKE owns this workload configuration. TAR supplies the locked chart and
-# controller image identities. The current INIT foundation uses Flannel, so
-# this first trust slice does not claim NetworkPolicy enforcement.
+# controller image identities. Cilium owns cluster network policy enforcement;
+# this chart leaves its own policy resources disabled for explicit consumers.
 crds:
   enabled: true
   keep: true
