@@ -1,0 +1,157 @@
+---
+# yamllint disable rule:line-length
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: shell-identity
+  labels:
+    app.kubernetes.io/name: keycloak
+    app.kubernetes.io/part-of: shell-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keycloak
+        app.kubernetes.io/part-of: shell-platform
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: render-realm
+          image: quay.io/keycloak/keycloak:26.7.2@sha256:831330513f55695572286e521f94fcd3c7e285250ed5b848090265a33192f669
+          imagePullPolicy: IfNotPresent
+          command: [/usr/bin/sh, -ec]
+          args:
+            - >-
+              sed -e "s|\${KEYCLOAK_LDAP_BIND_PASSWORD}|$KEYCLOAK_LDAP_BIND_PASSWORD|g"
+              /template/shell-realm.json > /realm/shell-realm.json;
+              chmod 0400 /realm/shell-realm.json
+          env:
+            - name: KEYCLOAK_LDAP_BIND_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-runtime
+                  key: ldap_bind_password
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: realm-template
+              mountPath: /template
+              readOnly: true
+            - name: rendered-realm
+              mountPath: /realm
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.7.2@sha256:831330513f55695572286e521f94fcd3c7e285250ed5b848090265a33192f669
+          imagePullPolicy: IfNotPresent
+          args:
+            - start
+            - --https-port=8443
+            - --https-certificate-file=/etc/keycloak/tls/tls.crt
+            - --https-certificate-key-file=/etc/keycloak/tls/tls.key
+            - --hostname=https://keycloak.shell-identity.svc.cluster.local
+            - --import-realm
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL_HOST
+              value: keycloak-postgresql
+            - name: KC_DB_URL_DATABASE
+              value: keycloak
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-database
+                  key: username
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-database
+                  key: password
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-bootstrap
+                  key: username
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-bootstrap
+                  key: password
+            - name: KC_TRUSTSTORE_PATHS
+              value: /etc/keycloak/ldap-ca/ca.crt
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "true"
+          ports:
+            - name: https
+              containerPort: 8443
+            - name: management
+              containerPort: 9000
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /health/ready
+              port: management
+            initialDelaySeconds: 120
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /health/live
+              port: management
+            initialDelaySeconds: 180
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: public-tls
+              mountPath: /etc/keycloak/tls
+              readOnly: true
+            - name: ldap-ca
+              mountPath: /etc/keycloak/ldap-ca
+              readOnly: true
+            - name: rendered-realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+      volumes:
+        - name: public-tls
+          secret:
+            secretName: keycloak-public-tls
+        - name: ldap-ca
+          configMap:
+            name: shell-freeipa-ca
+        - name: realm-template
+          configMap:
+            name: keycloak-realm
+        - name: rendered-realm
+          emptyDir: {}
