@@ -1,12 +1,12 @@
 # Use AlmaLinux 9 for the FreeIPA identity host
 
-Last updated: 26.08.2026
+Last updated: 02.09.2026
 
 ## Summary
 
 Use AlmaLinux 9 as the source-contract target for the shared FreeIPA identity
 host. AlmaLinux is RHEL-compatible and provides a clear native-package target
-while the service implementation remains source-only.
+for the source-defined FreeIPA service path.
 
 ## Context
 
@@ -36,18 +36,17 @@ The GCP node contract accepts an exact image self-link from the
 `debian-cloud` Debian 13 image line. A custom image requires an explicit source
 contract update that binds its provenance and operating system.
 
-The source-only implementation records the target OS and public contract shape
-but remains blocked until an approved AlmaLinux image, artifact handoff, and
-private credential handoff exist. No identity package installation, guest
-startup, FreeIPA initialization, DNS publication, or live verification is part
-of this decision.
+The source implementation records the target OS, native package contract,
+private SOPS/age credential handoff, fixed INIT controller, and FreeIPA
+completion-marker boundary. These source contracts do not authorize package
+installation, guest startup, FreeIPA initialization, DNS publication, or live
+verification.
 
 The shared-node contract records the operating system alongside the pinned GCP
 image, exposes it to the inventory renderer, and keeps the identity host out of
 the Debian baseline group. The identity firewall targets only the identity
-node and matches the SUDO FreeIPA port contract. The identity preview refuses
-normal execution while the image, artifact, and private credential handoffs
-remain incomplete.
+node and matches the SUDO FreeIPA port contract. The fixed INIT controller
+refuses configuration without the exact approval and private handoffs.
 
 ## Consequences
 
@@ -55,11 +54,12 @@ The project has one explicit identity-host target and a clear RHEL-compatible
 platform boundary. Choosing Rocky Linux later requires a new or superseding
 decision. Debian 13 remains the target for delivery and K3s guests.
 
-The next source gates are the AlmaLinux image contract, verified artifact
-supply, and private FreeIPA credential handoff. Static JSON, Python, Ansible
-syntax, and lint checks can prove contract shape and preview safety. They do
-not prove image availability, guest readiness, FreeIPA convergence, DNS
-reachability, identity authentication, or recovery.
+Static JSON, Python, Ansible syntax, and lint checks can prove contract shape,
+private-input guards, and controller preview safety. The package contract is
+source-reference-only, and the encrypted input is generated only after its
+separate SUDO approval. These checks do not prove image or package
+availability, guest readiness, FreeIPA convergence, DNS reachability, identity
+authentication, or recovery.
 
 ## References
 

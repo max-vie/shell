@@ -1,0 +1,110 @@
+---
+# yamllint disable rule:line-length
+# Read-only FreeIPA service verification. Credentials are not required for
+# host, service, listener, and marker checks.
+- name: Verify the native FreeIPA identity host
+  hosts: identity_nodes
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  pre_tasks:
+    - name: Load the public FreeIPA host profile
+      ansible.builtin.include_vars:
+        file: "{{ playbook_dir }}/../../../sudo/access/freeipa-host-profile.json"
+        name: shell_identity_profile
+      tags: [always]
+
+    - name: Require the exact identity host target
+      ansible.builtin.assert:
+        that:
+          - groups.identity_nodes == ['identity-01']
+          - inventory_hostname == shell_identity_profile.host.name
+          - ansible_host == shell_identity_profile.host.ip_address
+          - shell_expected_address == shell_identity_profile.host.ip_address
+          - shell_role == 'identity'
+          - shell_cluster == 'shared'
+          - shell_transport == 'gcp_iap'
+        fail_msg: The selected target does not match the FreeIPA host contract.
+      tags: [always]
+
+  tasks:
+    - name: Wait for the identity guest
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    - name: Gather identity guest facts
+      ansible.builtin.setup:
+
+    - name: Gather identity service facts
+      ansible.builtin.service_facts:
+
+    - name: Inspect the FreeIPA completion marker and configuration
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      loop:
+        - "{{ shell_identity_profile.runtime.completion_marker }}"
+        - /etc/ipa/default.conf
+      register: shell_identity_files
+
+    - name: Verify the installed native packages
+      ansible.builtin.command:
+        argv:
+          - rpm
+          - -q
+          - ipa-server
+          - ipa-server-dns
+          - samba-common-libs
+      changed_when: false
+      register: shell_identity_packages
+
+    - name: Read FreeIPA service status
+      ansible.builtin.command:
+        argv: [ipactl, status]
+      changed_when: false
+      register: shell_identity_status
+
+    - name: Require the FreeIPA host and service contract
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == 'AlmaLinux'
+          - ansible_facts.distribution_major_version == '9'
+          - shell_identity_files.results[0].stat.exists
+          - shell_identity_files.results[0].stat.isreg
+          - shell_identity_files.results[0].stat.mode == '0600'
+          - shell_identity_files.results[1].stat.exists
+          - shell_identity_files.results[1].stat.isreg
+          - shell_identity_packages.rc == 0
+          - "'Directory Service: RUNNING' in shell_identity_status.stdout"
+          - "'krb5kdc Service: RUNNING' in shell_identity_status.stdout"
+          - "'httpd Service: RUNNING' in shell_identity_status.stdout"
+          - "'named Service: RUNNING' in shell_identity_status.stdout"
+        fail_msg: The FreeIPA host or native service contract is not healthy.
+
+    - name: Verify declared FreeIPA TCP listeners
+      ansible.builtin.wait_for:
+        host: "{{ shell_identity_profile.host.ip_address }}"
+        port: "{{ item }}"
+        timeout: 10
+      loop: "{{ shell_identity_profile.runtime.ports.tcp }}"
+
+- name: Verify FreeIPA reachability from a GCP K3s consumer
+  hosts: gcp_k3s_servers[0]
+  gather_facts: false
+  any_errors_fatal: true
+  vars:
+    shell_identity_address: 10.77.0.210
+  tasks:
+    - name: Wait for FreeIPA DNS from the K3s consumer
+      ansible.builtin.wait_for:
+        host: "{{ shell_identity_address }}"
+        port: 53
+        timeout: 10
+
+    - name: Wait for the FreeIPA HTTPS listener from the K3s consumer
+      ansible.builtin.wait_for:
+        host: "{{ shell_identity_address }}"
+        port: 443
+        timeout: 10
+# yamllint enable rule:line-length

@@ -36,3 +36,5 @@ guest images, bootstraps hosts and guests, and produces the role-inventory input
   - [Runtime guidance](docs/runtime.md): access paths, secret handling, and
     private state.
   - [K3s runtime](docs/k3s-runtime.md): cluster inputs and proof boundaries.
+  - [FreeIPA identity service](docs/identity-service.md): identity custody,
+    bootstrap behavior, verification, and proof limits.

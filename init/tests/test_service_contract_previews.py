@@ -12,6 +12,7 @@ PREVIEWS = {
     "delivery": PLAYBOOK_DIRECTORY / "configure-delivery-node.yml",
     "identity": PLAYBOOK_DIRECTORY / "configure-identity-service.yml",
 }
+BIND_PLAYBOOK = PLAYBOOK_DIRECTORY / "configure-keycloak-ldap-bind.yml"
 
 
 class TestServiceContractPreviews(unittest.TestCase):
@@ -21,6 +22,8 @@ class TestServiceContractPreviews(unittest.TestCase):
         for boundary, playbook in PREVIEWS.items():
             with self.subTest(boundary=boundary):
                 source = playbook.read_text(encoding="utf-8")
+                if boundary == "identity":
+                    continue
                 pre_tasks = source.index("\n  pre_tasks:")
                 refusal = source.index(f"\n    - name: Refuse {boundary} mutation")
                 tasks = source.index("\n  tasks:")
@@ -30,12 +33,14 @@ class TestServiceContractPreviews(unittest.TestCase):
                 gate = source[pre_tasks:tasks]
                 self.assertIn("when: not ansible_check_mode", source[refusal:tasks])
                 self.assertIn("ansible.builtin.fail:", source[refusal:tasks])
-                expected_controller_tasks = 3 if boundary == "identity" else 8
-                expected_always_tags = 5 if boundary == "identity" else 10
+                expected_controller_tasks = 8
+                expected_always_tags = 10
                 self.assertEqual(
                     gate.count("delegate_to: localhost"), expected_controller_tasks
                 )
-                self.assertEqual(gate.count("run_once: true"), expected_controller_tasks)
+                self.assertEqual(
+                    gate.count("run_once: true"), expected_controller_tasks
+                )
                 self.assertEqual(gate.count("become: false"), expected_controller_tasks)
                 self.assertEqual(gate.count("tags: [always]"), expected_always_tags)
                 required_checks = [
@@ -44,54 +49,38 @@ class TestServiceContractPreviews(unittest.TestCase):
                     "shell_transport | default('')",
                     "(ansible_user | default('')) != 'root'",
                 ]
-                if boundary == "identity":
-                    required_checks.extend(
-                        [
-                            "shell_identity_inventory_group",
-                            "shell_identity_role",
-                            "shell_identity_cluster",
-                            "shell_identity_transport",
-                            "shell_identity_profile.host.operating_system == 'almalinux-9'",
-                            "shell_identity_profile.identity.domain == 'shell.internal'",
-                            "identity_credentials.handoff_status",
-                            "sudo/access/freeipa-host-profile.json",
-                            "validate_access_contracts.py",
-                        ]
-                    )
-                else:
-                    required_checks.extend(
-                        [
-                            "shell_delivery_inventory_group",
-                            "shell_delivery_role",
-                            "shell_delivery_cluster",
-                            "shell_delivery_transport",
-                            "sudo/access/delivery-host-profile.json",
-                            "sudo/secrets/delivery-input-contract.json",
-                            "tar/manifests/delivery-supply.json",
-                            "make/contracts/service-node-handoff-requirements.json",
-                            "repository_policy.private_values_tracked",
-                            "shell_delivery_supply.proof_status == 'source-reference-only'",
-                            "validate_access_contracts.py",
-                            "validate_delivery_supply.py",
-                            "validate_service_node_handoff.py",
-                        ]
-                    )
+                required_checks.extend(
+                    [
+                        "shell_delivery_inventory_group",
+                        "shell_delivery_role",
+                        "shell_delivery_cluster",
+                        "shell_delivery_transport",
+                        "sudo/access/delivery-host-profile.json",
+                        "sudo/secrets/delivery-input-contract.json",
+                        "tar/manifests/delivery-supply.json",
+                        "make/contracts/service-node-handoff-requirements.json",
+                        "repository_policy.private_values_tracked",
+                        "shell_delivery_supply.proof_status == 'source-reference-only'",
+                        "validate_access_contracts.py",
+                        "validate_delivery_supply.py",
+                        "validate_service_node_handoff.py",
+                    ]
+                )
                 for required in required_checks:
                     self.assertIn(required, gate)
                 expected_pre_task_modules = [
                     "ansible.builtin.command",
                     "ansible.builtin.include_vars",
                 ]
-                if boundary == "delivery":
-                    expected_pre_task_modules.extend(
-                        [
-                            "ansible.builtin.include_vars",
-                            "ansible.builtin.include_vars",
-                            "ansible.builtin.include_vars",
-                            "ansible.builtin.command",
-                            "ansible.builtin.command",
-                        ]
-                    )
+                expected_pre_task_modules.extend(
+                    [
+                        "ansible.builtin.include_vars",
+                        "ansible.builtin.include_vars",
+                        "ansible.builtin.include_vars",
+                        "ansible.builtin.command",
+                        "ansible.builtin.command",
+                    ]
+                )
                 expected_pre_task_modules.extend(
                     ["ansible.builtin.assert", "ansible.builtin.assert"]
                 )
@@ -112,10 +101,98 @@ class TestServiceContractPreviews(unittest.TestCase):
                     ["ansible.builtin.debug", "ansible.builtin.meta"],
                 )
 
+    def test_identity_preview_gates_private_input_and_guest_mutation(self) -> None:
+        source = PREVIEWS["identity"].read_text(encoding="utf-8")
+        public_validation = source.index("Validate all public SUDO access contracts")
+        tar_validation = source.index("Validate the TAR FreeIPA package contract")
+        private_gate = source.index("Stop before private input access in check mode")
+        decrypt = source.index("Decrypt the private FreeIPA bootstrap input")
+        guest_gate = source.index("Stop before identity guest access in check mode")
+        mutation = source.index("Set the identity host FQDN")
+
+        self.assertLess(public_validation, tar_validation)
+        self.assertLess(tar_validation, private_gate)
+        self.assertLess(private_gate, decrypt)
+        self.assertLess(decrypt, guest_gate)
+        self.assertLess(guest_gate, mutation)
+        preflight = source.index(
+            "Refuse to adopt a partial or different FreeIPA installation"
+        )
+        self.assertLess(preflight, mutation)
+        ambiguous = source.index("Refuse ambiguous managed DNS records")
+        replace = source.index("Replace drifted managed DNS records")
+        self.assertLess(ambiguous, replace)
+        final_membership = source.index("Inspect final platform-operators membership")
+        health = source.index(
+            "Require running FreeIPA services and deny-by-default membership"
+        )
+        self.assertLess(final_membership, health)
+        self.assertEqual(source.count("hosts: localhost"), 2)
+        for required in (
+            "sudo/access/freeipa-host-profile.json",
+            "sudo/scripts/validate_access_contracts.py",
+            "tar/scripts/validate_freeipa_supply.py",
+            "environment-gcp/init/identity-service",
+            "sops",
+            "shell_identity_secret",
+            "completion_marker",
+        ):
+            self.assertIn(required, source)
+        self.assertNotIn("Refuse identity mutation", source)
+        self.assertNotIn("sudo_profile_path", source)
+        self.assertNotIn("sudo_secret_path", source)
+
+    def test_identity_verification_is_read_only_and_fixed(self) -> None:
+        source = (PLAYBOOK_DIRECTORY / "verify-identity-service.yml").read_text(
+            encoding="utf-8"
+        )
+        for required in (
+            "hosts: identity_nodes",
+            "sudo/access/freeipa-host-profile.json",
+            "rpm",
+            "ipactl",
+            "completion_marker",
+            "shell_identity_profile.host.ip_address",
+            "hosts: gcp_k3s_servers[0]",
+        ):
+            self.assertIn(required, source)
+        for forbidden in (
+            "sops",
+            "ipa-server-install",
+            "ansible.builtin.dnf",
+            "ansible.builtin.hostname",
+            "ansible.builtin.lineinfile",
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_keycloak_bind_preview_gates_private_input_and_guest_mutation(self) -> None:
+        source = BIND_PLAYBOOK.read_text(encoding="utf-8")
+        public_validation = source.index("Validate all public SUDO access contracts")
+        tar_validation = source.index("Validate the TAR Keycloak image contract")
+        private_gate = source.index("Stop before private input access in check mode")
+        decrypt = source.index("Decrypt the Keycloak input")
+        guest_gate = source.index("Stop before identity guest access in check mode")
+        mutation = source.index("Create the Keycloak bind principal when absent")
+        self.assertLess(public_validation, tar_validation)
+        self.assertLess(tar_validation, private_gate)
+        self.assertLess(private_gate, decrypt)
+        self.assertLess(decrypt, guest_gate)
+        self.assertLess(guest_gate, mutation)
+        for required in (
+            "sudo/access/freeipa-host-profile.json",
+            "sudo/access/keycloak-profile.json",
+            "tar/scripts/validate_keycloak_supply.py",
+            "environment-gcp/init/keycloak-ldap-bind",
+            "sops",
+            "ldapwhoami",
+        ):
+            self.assertIn(required, source)
+        self.assertIn("TLS_REQCERT=demand", source)
+
     def test_contract_and_validator_paths_are_not_extra_var_overridable(self) -> None:
-        vars_source = (
-            PLAYBOOK_DIRECTORY.parent / "vars" / "contracts.yml"
-        ).read_text(encoding="utf-8")
+        vars_source = (PLAYBOOK_DIRECTORY.parent / "vars" / "contracts.yml").read_text(
+            encoding="utf-8"
+        )
         self.assertNotIn("shell_access_validator", vars_source)
         self.assertNotIn("shell_delivery_supply_validator", vars_source)
         self.assertNotIn("shell_service_handoff_validator", vars_source)
