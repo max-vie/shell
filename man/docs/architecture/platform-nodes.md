@@ -40,8 +40,10 @@ run.
 
 The proxy-only subnet is `10.77.2.0/23`. Harbor reaches its Kubernetes HTTPS
 NodePort at `30443`, and release-feed reaches `30444`. Argo CD and OpenBao
-remain ClusterIP-only. These are source designs, not deployed endpoint or
-reachability evidence.
+remain ClusterIP-only. Keycloak is also cluster-local at
+`keycloak.shell-identity.svc.cluster.local`; it has no GCP frontend or public
+DNS record in the current slice. These are source designs, not deployed
+endpoint or reachability evidence.
 
 ## GCP K3s Cluster
 
