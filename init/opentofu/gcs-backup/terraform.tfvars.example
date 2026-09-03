@@ -1,0 +1,2 @@
+project_id  = "replace-with-gcp-project-id"
+bucket_name = "replace-with-unique-shell-velero-bucket"
