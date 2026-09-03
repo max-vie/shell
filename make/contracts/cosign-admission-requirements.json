@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "cosign-admission-requirements",
+  "description": "Source-only MAKE contract for label-scoped Cosign admission with Kyverno.",
+  "policy_owner": "sudo",
+  "producer_owners": ["sudo", "tar"],
+  "consumer_owners": ["make"],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "source_contracts": {
+    "trust": "sudo/secrets/cosign-trust-input-contract.json",
+    "supply": "tar/manifests/kubernetes-ecosystem-supply.json",
+    "harbor_robots": "make/contracts/harbor-robot-handoff.json",
+    "argo": "make/gitops/applications/children/kyverno.yaml"
+  },
+  "trust": {
+    "owner": "sudo",
+    "namespace": "shell-trust",
+    "secret_name": "cosign-public-keys",
+    "key": "cosign.pub",
+    "approval": "environment-gcp/make/cosign-trust"
+  },
+  "policy": {
+    "name": "shell-require-signed-images",
+    "kind": "ClusterPolicy",
+    "namespace_label": {
+      "key": "shell.platform/policy",
+      "value": "enforced"
+    },
+    "image_prefix": "registry.shell.internal/shell/",
+    "required": true,
+    "verify_digest": true,
+    "mutate_digest": false,
+    "failure_policy": "Fail",
+    "validation_failure_action": "Enforce",
+    "rekor_ignore_tlog": true,
+    "ctlog_ignore_sct": true
+  },
+  "gitops": {
+    "application": "make/gitops/applications/children/kyverno.yaml",
+    "values": "make/gitops/values/kyverno.yaml",
+    "resources": "make/gitops/platform/kyverno",
+    "policy": "make/gitops/platform/kyverno/policies.yaml",
+    "trust_rbac": "make/gitops/platform/kyverno/trust-rbac.yaml"
+  },
+  "excluded_fields": [
+    "private_key",
+    "password",
+    "plaintext_credentials",
+    "kubeconfig_data",
+    "live_admission_evidence"
+  ]
+}
