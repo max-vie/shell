@@ -1,0 +1,38 @@
+---
+# INIT renders this private values file from the TAR Cilium handoff.
+# yamllint disable rule:braces
+# yamllint disable rule:line-length
+kubeProxyReplacement: {{ shell_k3s_cilium_configuration.kube_proxy_replacement | bool | to_json }}
+k8sServiceHost: "{{ shell_k3s_api_host }}"
+k8sServicePort: 6443
+tunnelProtocol: "{{ shell_k3s_cilium_configuration.tunnel_protocol }}"
+ipam:
+  mode: "{{ shell_k3s_cilium_configuration.ipam_mode }}"
+  operator:
+    clusterPoolIPv4PodCIDRList:
+      - "{{ shell_k3s_pod_cidr }}"
+cni:
+  exclusive: {{ shell_k3s_cilium_configuration.cni_exclusive | bool | to_json }}
+socketLB:
+  enabled: {{ shell_k3s_cilium_configuration.socket_lb_enabled | bool | to_json }}
+  hostNamespaceOnly: {{ shell_k3s_cilium_configuration.socket_lb_host_namespace_only | bool | to_json }}
+operator:
+  replicas: {{ shell_k3s_cilium_configuration.operator_replicas | int }}
+  image:
+    tag: "{{ shell_k3s_cilium_images.operator.tag }}"
+    genericDigest: "{{ shell_k3s_cilium_images.operator.digest }}"
+    useDigest: true
+image:
+  repository: "{{ shell_k3s_cilium_images.agent.repository }}"
+  tag: "{{ shell_k3s_cilium_images.agent.tag }}"
+  digest: "{{ shell_k3s_cilium_images.agent.digest }}"
+  useDigest: true
+envoy:
+  enabled: true
+  image:
+    repository: "{{ shell_k3s_cilium_images.envoy.repository }}"
+    tag: "{{ shell_k3s_cilium_images.envoy.tag }}"
+    digest: "{{ shell_k3s_cilium_images.envoy.digest }}"
+    useDigest: true
+# yamllint enable rule:line-length
+# yamllint enable rule:braces

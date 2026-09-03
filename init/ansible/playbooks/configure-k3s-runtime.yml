@@ -43,6 +43,43 @@
           The selected cluster needs a private endpoint, version, TAR binary
           handoff, SUDO token handoff, and distinct pod/service CIDRs.
 
+    - name: Require the Cilium network supply handoff
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_helm_version is defined
+          - shell_k3s_helm_version is match('^v[0-9]+[.][0-9]+[.][0-9]+$')
+          - shell_k3s_helm_path is defined
+          - shell_k3s_helm_path is match('^/')
+          - shell_k3s_helm_sha256 is defined
+          - shell_k3s_helm_sha256 is match('^[0-9a-f]{64}$')
+          - shell_k3s_cilium_chart_path is defined
+          - shell_k3s_cilium_chart_path is match('^/')
+          - shell_k3s_cilium_chart_sha256 is defined
+          - shell_k3s_cilium_chart_sha256 is match('^[0-9a-f]{64}$')
+          - shell_k3s_cilium_chart_version is defined
+          - shell_k3s_cilium_chart_version == '1.18.2'
+          - shell_k3s_cilium_images is mapping
+          - >-
+            shell_k3s_cilium_images.agent.digest is
+            match('^sha256:[0-9a-f]{64}$')
+          - >-
+            shell_k3s_cilium_images.envoy.digest is
+            match('^sha256:[0-9a-f]{64}$')
+          - >-
+            shell_k3s_cilium_images.operator.digest is
+            match('^sha256:[0-9a-f]{64}$')
+          - shell_k3s_cilium_configuration is mapping
+          - shell_k3s_cilium_configuration.ipam_mode == 'cluster-pool'
+          - shell_k3s_cilium_configuration.tunnel_protocol == 'vxlan'
+          - shell_k3s_cilium_configuration.cni_exclusive | bool
+          - shell_k3s_cilium_configuration.kube_proxy_replacement | bool
+          - shell_k3s_cilium_configuration.socket_lb_enabled | bool
+          - shell_k3s_cilium_configuration.socket_lb_host_namespace_only | bool
+          - shell_k3s_cilium_configuration.operator_replicas | int == 1
+        fail_msg: >-
+          INIT requires the private TAR Helm and Cilium handoff before the
+          K3s network foundation can be configured.
+
     - name: Require the Proxmox K3s API VIP contract
       ansible.builtin.assert:
         that:
@@ -164,6 +201,26 @@
       run_once: true
       register: shell_k3s_binary
 
+    - name: Inspect the private TAR Helm handoff
+      ansible.builtin.stat:
+        path: "{{ shell_k3s_helm_path }}"
+        checksum_algorithm: sha256
+        follow: false
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: shell_k3s_helm
+
+    - name: Inspect the private TAR Cilium chart handoff
+      ansible.builtin.stat:
+        path: "{{ shell_k3s_cilium_chart_path }}"
+        checksum_algorithm: sha256
+        follow: false
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: shell_k3s_cilium_chart
+
     - name: Require the exact private K3s binary
       ansible.builtin.assert:
         that:
@@ -172,6 +229,22 @@
           - shell_k3s_binary.stat.checksum == shell_k3s_binary_sha256
         fail_msg: >-
           The private TAR K3s binary does not match its declared SHA-256.
+      run_once: true
+
+    - name: Require the exact private Helm binary and Cilium chart
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_helm.stat.isreg
+          - not shell_k3s_helm.stat.islnk
+          - shell_k3s_helm.stat.checksum == shell_k3s_helm_sha256
+          - shell_k3s_cilium_chart.stat.isreg
+          - not shell_k3s_cilium_chart.stat.islnk
+          - >-
+            shell_k3s_cilium_chart.stat.checksum ==
+            shell_k3s_cilium_chart_sha256
+        fail_msg: >-
+          The private TAR Helm binary or Cilium chart does not match its
+          declared SHA-256.
       run_once: true
 
     - name: Apply the K3s baseline, install, and service start
@@ -259,6 +332,30 @@
             fail_msg: >-
               The installed K3s binary does not report the declared version
               {{ shell_k3s_version }}.
+
+        - name: Install the checksum-verified Helm binary
+          ansible.builtin.copy:
+            src: "{{ shell_k3s_helm_path }}"
+            dest: "{{ shell_k3s_helm_dest }}"
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Verify the installed Helm binary version
+          ansible.builtin.command:
+            argv: ["{{ shell_k3s_helm_dest }}", version, --short]
+          changed_when: false
+          register: shell_k3s_installed_helm_version
+
+        - name: Require the declared Helm version
+          ansible.builtin.assert:
+            that:
+              - >-
+                shell_k3s_helm_version in
+                shell_k3s_installed_helm_version.stdout
+            fail_msg: >-
+              The installed Helm binary does not report the declared version
+              {{ shell_k3s_helm_version }}.
 
         - name: Create the private K3s configuration directory
           ansible.builtin.file:
@@ -449,6 +546,118 @@
         enabled: true
         state: restarted
         daemon_reload: true
+
+- name: Configure the Cilium network foundation
+  hosts: "{{ shell_k3s_target_group }}"
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  vars_files:
+    - ../vars/k3s.yml
+  pre_tasks:
+    - name: Validate the complete K3s target
+      ansible.builtin.import_tasks: tasks/require-k3s-target.yml
+      tags: [always]
+
+    - name: Stop before Cilium connections or mutation in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+  tasks:
+    - name: Install and converge Cilium from the private TAR handoff
+      when: inventory_hostname == groups[shell_k3s_target_group][0]
+      run_once: true
+      block:
+        - name: Copy the private Cilium chart to the first server
+          ansible.builtin.copy:
+            src: "{{ shell_k3s_cilium_chart_path }}"
+            dest: "{{ shell_k3s_cilium_chart_dest }}"
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: Render the private Cilium values
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/templates/cilium-values.yml.j2"
+            dest: "{{ shell_k3s_cilium_values_dest }}"
+            owner: root
+            group: root
+            mode: "0600"
+
+        - name: Install the pinned Cilium network foundation
+          ansible.builtin.command:
+            argv:
+              - "{{ shell_k3s_helm_dest }}"
+              - upgrade
+              - --install
+              - cilium
+              - "{{ shell_k3s_cilium_chart_dest }}"
+              - --namespace
+              - "{{ shell_k3s_cilium_namespace }}"
+              - --create-namespace
+              - --kubeconfig
+              - "{{ shell_k3s_config_dir }}/k3s.yaml"
+              - --values
+              - "{{ shell_k3s_cilium_values_dest }}"
+              - --atomic
+              - --reset-values
+              - --wait
+              - --timeout
+              - 15m
+          register: shell_k3s_cilium_install
+          changed_when: true
+
+        - name: Wait for every Cilium agent
+          ansible.builtin.command:
+            argv:
+              - "{{ shell_k3s_binary_dest }}"
+              - kubectl
+              - --kubeconfig={{ shell_k3s_config_dir }}/k3s.yaml
+              - -n
+              - kube-system
+              - rollout
+              - status
+              - daemonset/cilium
+              - --timeout=300s
+          changed_when: false
+
+        - name: Wait for every Cilium Envoy agent
+          ansible.builtin.command:
+            argv:
+              - "{{ shell_k3s_binary_dest }}"
+              - kubectl
+              - --kubeconfig={{ shell_k3s_config_dir }}/k3s.yaml
+              - -n
+              - kube-system
+              - rollout
+              - status
+              - daemonset/cilium-envoy
+              - --timeout=300s
+          changed_when: false
+
+        - name: Wait for the Cilium operator
+          ansible.builtin.command:
+            argv:
+              - "{{ shell_k3s_binary_dest }}"
+              - kubectl
+              - --kubeconfig={{ shell_k3s_config_dir }}/k3s.yaml
+              - -n
+              - kube-system
+              - rollout
+              - status
+              - deployment/cilium-operator
+              - --timeout=300s
+          changed_when: false
+      always:
+        - name: Remove the private Cilium chart
+          ansible.builtin.file:
+            path: "{{ shell_k3s_cilium_chart_dest }}"
+            state: absent
+
+        - name: Remove the private Cilium values
+          ansible.builtin.file:
+            path: "{{ shell_k3s_cilium_values_dest }}"
+            state: absent
 
 - name: Export the private K3s kubeconfig
   hosts: "{{ shell_k3s_target_group }}"

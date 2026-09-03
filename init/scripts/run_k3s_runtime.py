@@ -15,6 +15,7 @@ import json
 import os
 import re
 import stat
+
 # Every invocation below uses a fixed argv list and leaves shell execution off.
 import subprocess  # nosec B404
 import sys
@@ -24,6 +25,11 @@ from pathlib import Path
 from typing import Any, Callable, cast
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+TAR_SCRIPTS = REPOSITORY_ROOT / "tar/scripts"
+if str(TAR_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(TAR_SCRIPTS))
+import validate_init_k3s_network_supply as network_supply  # noqa: E402
+
 PRIVATE_DIRECTORY_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -42,7 +48,13 @@ GCP_RESERVED_API_HOSTS = frozenset(
         "10.77.0.210",
         "10.77.0.211",
         "10.77.0.220",
+        "10.77.0.221",
+        "10.77.0.222",
     )
+)
+K3S_HOST_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in ("10.77.0.0/24", "10.66.0.0/24", "10.77.2.0/23")
 )
 GENERATED_TARGET_HOST_VARS = frozenset(
     {
@@ -211,9 +223,11 @@ def _paths(repository_root: Path, cluster: str) -> dict[str, Path]:
         "inventory": ansible / "inventory.json",
         "connection": ansible / "connection-inventory.yml",
         "supply": ansible / "k3s-runtime-supply.json",
+        "network_supply": ansible / "k3s-network-supply.json",
         "runtime": ansible / "k3s-runtime" / f"{cluster}.json",
         "temporary": ansible / ".k3s-runtime",
         "lock": repository_root / "tar/manifests/init-k3s-runtime-supply.json",
+        "network_lock": repository_root / "tar/manifests/init-k3s-network-supply.json",
         "configure": repository_root
         / "init/ansible/playbooks/configure-k3s-runtime.yml",
         "verify": repository_root / "init/ansible/playbooks/verify-k3s-runtime.yml",
@@ -631,6 +645,14 @@ def load_runtime_vars(
         not networks[0].overlaps(networks[1]),
         "K3s pod and service CIDRs must not overlap",
     )
+    require(
+        all(
+            not network.overlaps(host_network)
+            for network in networks
+            for host_network in K3S_HOST_NETWORKS
+        ),
+        "K3s pod and service CIDRs overlap a declared host network",
+    )
     if cluster == "proxmox":
         interface = document.get("shell_k3s_api_vip_interface")
         if not isinstance(interface, str):
@@ -643,11 +665,105 @@ def load_runtime_vars(
     return result
 
 
+def load_network_supply(
+    path: Path, lock_path: Path, repository_root: Path
+) -> dict[str, Any]:
+    """Validate the private TAR-to-INIT Cilium handoff."""
+
+    handoff = _read_json(
+        path,
+        "TAR Cilium network handoff",
+        private=True,
+        repository_root=repository_root,
+    )
+    lock = network_supply.validate_public(lock_path)
+    require(
+        set(handoff)
+        == {
+            "shell_k3s_helm_version",
+            "shell_k3s_helm_path",
+            "shell_k3s_helm_sha256",
+            "shell_k3s_cilium_chart_path",
+            "shell_k3s_cilium_chart_sha256",
+            "shell_k3s_cilium_chart_version",
+            "shell_k3s_cilium_images",
+            "shell_k3s_cilium_configuration",
+        },
+        "TAR Cilium network handoff shape changed",
+    )
+
+    helm = cast(dict[str, Any], lock["helm_binary"])
+    helm_path_value = handoff["shell_k3s_helm_path"]
+    require(isinstance(helm_path_value, str), "Helm binary path is invalid")
+    helm_path = Path(helm_path_value)
+    expected_helm_path = repository_root / ".local/tar/init-k3s-network/helm"
+    require(helm_path == expected_helm_path, "Helm binary path changed")
+    _require_private_file(helm_path, "staged Helm binary", repository_root)
+    require(
+        handoff["shell_k3s_helm_version"] == helm["version"],
+        "Helm version changed",
+    )
+    require(
+        handoff["shell_k3s_helm_sha256"] == helm["sha256"],
+        "Helm binary checksum changed",
+    )
+    require(helm_path.stat().st_size == helm["size"], "staged Helm binary size changed")
+    require(
+        _sha256(helm_path) == handoff["shell_k3s_helm_sha256"],
+        "staged Helm binary checksum does not match TAR",
+    )
+
+    chart = cast(dict[str, Any], lock["cilium_chart"])
+    chart_path_value = handoff["shell_k3s_cilium_chart_path"]
+    require(isinstance(chart_path_value, str), "Cilium chart path is invalid")
+    chart_path = Path(chart_path_value)
+    expected_chart_path = (
+        repository_root / ".local/tar/init-k3s-network/charts/cilium-1.18.2.tgz"
+    )
+    require(chart_path == expected_chart_path, "Cilium chart path changed")
+    _require_private_file(chart_path, "staged Cilium chart", repository_root)
+    require(
+        handoff["shell_k3s_cilium_chart_version"] == chart["version"],
+        "Cilium chart version changed",
+    )
+    require(
+        handoff["shell_k3s_cilium_chart_sha256"] == chart["sha256"],
+        "Cilium chart checksum changed",
+    )
+    require(
+        chart_path.stat().st_size == chart["size"],
+        "staged Cilium chart size changed",
+    )
+    require(
+        _sha256(chart_path) == handoff["shell_k3s_cilium_chart_sha256"],
+        "staged Cilium chart checksum does not match TAR",
+    )
+    require(
+        handoff["shell_k3s_cilium_images"] == lock["cilium_images"],
+        "Cilium image handoff changed",
+    )
+    require(
+        handoff["shell_k3s_cilium_configuration"] == lock["cilium_configuration"],
+        "Cilium configuration handoff changed",
+    )
+    return {
+        "shell_k3s_helm_version": handoff["shell_k3s_helm_version"],
+        "shell_k3s_helm_path": str(helm_path),
+        "shell_k3s_helm_sha256": handoff["shell_k3s_helm_sha256"],
+        "shell_k3s_cilium_chart_path": str(chart_path),
+        "shell_k3s_cilium_chart_sha256": handoff["shell_k3s_cilium_chart_sha256"],
+        "shell_k3s_cilium_chart_version": handoff["shell_k3s_cilium_chart_version"],
+        "shell_k3s_cilium_images": handoff["shell_k3s_cilium_images"],
+        "shell_k3s_cilium_configuration": handoff["shell_k3s_cilium_configuration"],
+    }
+
+
 def build_extra_vars(
     cluster: str,
     endpoint: str,
     api_host: str,
     supply: dict[str, str],
+    network: dict[str, Any],
     runtime: dict[str, str],
 ) -> dict[str, Any]:
     contract = _cluster_contract(cluster)
@@ -659,6 +775,7 @@ def build_extra_vars(
         "shell_k3s_api_vip_enabled": contract["vip_enabled"],
         "shell_k3s_api_vip_address": "10.66.0.200",
         **supply,
+        **network,
         **runtime,
     }
 
@@ -714,8 +831,11 @@ def execute(
         run_process,
     )
     supply = load_supply(paths["supply"], paths["lock"], repository_root)
+    network = load_network_supply(
+        paths["network_supply"], paths["network_lock"], repository_root
+    )
     runtime = load_runtime_vars(paths["runtime"], cluster, repository_root)
-    values = build_extra_vars(cluster, endpoint, api_host, supply, runtime)
+    values = build_extra_vars(cluster, endpoint, api_host, supply, network, runtime)
     temporary = _write_temporary_variables(values, paths["temporary"], repository_root)
     command = [
         "ansible-playbook",
@@ -759,7 +879,7 @@ def main(argv: list[str] | None = None) -> int:
             args.cluster,
             check=bool(getattr(args, "check", False)),
         )
-    except (OSError, RuntimeLauncherError) as error:
+    except (OSError, RuntimeLauncherError, network_supply.NetworkSupplyError) as error:
         print(f"K3s runtime launcher failed: {error}", file=sys.stderr)
         return 2
 
