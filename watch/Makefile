@@ -13,8 +13,10 @@ RELEASE_FEED_VALIDATOR := $(WATCH_ROOT)/scripts/validate_release_feed.py
 RELEASE_FEED_VERIFY := $(WATCH_ROOT)/scripts/verify_release_feed.py
 PLATFORM_ADDONS_VALIDATOR := $(WATCH_ROOT)/scripts/validate_platform_addons.py
 PLATFORM_ADDONS_VERIFY := $(WATCH_ROOT)/scripts/verify_platform_addons.py
+TRACING_VALIDATOR := $(WATCH_ROOT)/scripts/validate_tracing_contract.py
+TRACING_VERIFY := $(WATCH_ROOT)/scripts/verify_tracing.py
 
-.PHONY: check test check-logs check-recovery check-release-feed check-platform-addons verify verify-logs verify-release-feed verify-platform-addons recovery-status recovery-preflight stability-soak
+.PHONY: check test check-logs check-recovery check-release-feed check-platform-addons check-tracing check-security-audits verify verify-logs verify-release-feed verify-platform-addons verify-tracing recovery-status recovery-preflight stability-soak
 
 check: test
 
@@ -22,6 +24,9 @@ test:
 	$(PYTHON) $(CONTRACT_VALIDATOR)
 	$(PYTHON) $(SUPPLY_VALIDATOR)
 	$(PYTHON) $(PLATFORM_ADDONS_VALIDATOR)
+	$(PYTHON) $(TRACING_VALIDATOR)
+	$(PYTHON) $(WATCH_ROOT)/scripts/kube_bench.py
+	$(PYTHON) $(WATCH_ROOT)/scripts/k6_load.py
 	$(PYTHON) -m unittest discover -s $(WATCH_ROOT)/tests -p 'test_*.py'
 
 check-logs:
@@ -40,6 +45,15 @@ check-release-feed:
 check-platform-addons:
 	$(PYTHON) $(PLATFORM_ADDONS_VALIDATOR)
 	$(PYTHON) -m unittest $(WATCH_ROOT)/tests/test_platform_addons.py
+
+check-tracing:
+	$(PYTHON) $(TRACING_VALIDATOR)
+	$(PYTHON) -m unittest $(WATCH_ROOT)/tests/test_tracing.py
+
+check-security-audits:
+	$(PYTHON) $(WATCH_ROOT)/scripts/kube_bench.py
+	$(PYTHON) $(WATCH_ROOT)/scripts/k6_load.py
+	$(PYTHON) -m unittest $(WATCH_ROOT)/tests/test_security_audits.py
 
 # Read-only live verification for metrics and Grafana through the fixed first
 # GCP K3s server.
@@ -60,6 +74,11 @@ verify-release-feed:
 
 verify-platform-addons:
 	$(PYTHON) $(PLATFORM_ADDONS_VERIFY) \
+		--inventory "$(INVENTORY)" \
+		--inventory "$(CONNECTION_INVENTORY)"
+
+verify-tracing:
+	$(PYTHON) $(TRACING_VERIFY) \
 		--inventory "$(INVENTORY)" \
 		--inventory "$(CONNECTION_INVENTORY)"
 
