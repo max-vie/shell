@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "contract_version": "2.0.0",
+  "contract_version": "2.1.0",
   "contract_id": "freeipa-host-profile",
   "description": "Source-only SUDO policy for the shared FreeIPA identity and internal DNS host.",
   "policy_owner": "sudo",
@@ -21,6 +21,10 @@
     "domain": "shell.internal",
     "realm": "SHELL.INTERNAL",
     "dns_forwarders": ["1.1.1.1", "9.9.9.9"],
+    "proof_principals": {
+      "allowed": "shell-operator",
+      "denied": "shell-denied"
+    },
     "roles": ["identity", "internal-dns"],
     "groups": ["platform-admins", "platform-operators", "auditors"],
     "identity_model": "sudo/access/identity-model.json"
@@ -63,23 +67,60 @@
       "service_owner": "make"
     }
   ],
+  "runtime": {
+    "implementation": "native-packages",
+    "packages": ["ipa-server", "ipa-server-dns"],
+    "completion_marker": "/var/lib/shell/freeipa-install-complete",
+    "ports": {
+      "tcp": [53, 80, 88, 389, 443, 464, 636],
+      "udp": [53, 88, 464]
+    }
+  },
   "execution": {
     "owner": "init",
     "playbook": "init/ansible/playbooks/configure-identity-service.yml",
-    "mode": "contract-preview",
-    "status": "blocked-by-required-contracts"
+    "mode": "fixed-controller",
+    "status": "source-defined"
   },
   "private_custody": {
     "root": ".local/sudo/identity",
     "ignored": true,
     "directory_mode": "0700",
     "file_mode": "0600",
-    "secret_store": "undecided"
+    "secret_store": "sops-age",
+    "plaintext_values_tracked": false,
+    "publication": "create-only"
   },
   "secret_contract": {
-    "storage": "undecided",
+    "format": "sops-age-json",
+    "storage": "sops-age",
     "handoff_root": ".local/sudo/identity",
+    "handoff": ".local/sudo/identity/freeipa.sops.json",
+    "age_key": ".local/sudo/identity/age-key.txt",
     "private_values_tracked": false,
+    "constraints": {
+      "directory_manager_password": {
+        "min_length": 20,
+        "max_length": 30,
+        "character_set": "ascii-alphanumeric",
+        "reason": "FreeIPA directory-server password compatibility"
+      },
+      "admin_password": {
+        "min_length": 20,
+        "max_length": 64,
+        "character_set": "ascii-alphanumeric"
+      },
+      "proof_operator_password": {
+        "min_length": 20,
+        "max_length": 64,
+        "character_set": "ascii-alphanumeric"
+      },
+      "proof_denied_password": {
+        "min_length": 20,
+        "max_length": 64,
+        "character_set": "ascii-alphanumeric"
+      }
+    },
     "required_keys": [
       "directory_manager_password",
       "admin_password",
@@ -96,7 +137,8 @@
     "identity_credentials": {
       "owner": "sudo",
       "status": "source-defined",
-      "handoff_status": "not-defined",
+      "handoff_status": "generated-locally-after-approval",
+      "contract": "sudo/secrets/freeipa-input-contract.json",
       "required_keys": [
         "directory_manager_password",
         "admin_password",
@@ -113,7 +155,8 @@
     },
     "artifact_supply": {
       "owner": "tar",
-      "status": "not-defined"
+      "status": "source-defined",
+      "contract": "tar/manifests/freeipa-supply.json"
     }
   }
 }
