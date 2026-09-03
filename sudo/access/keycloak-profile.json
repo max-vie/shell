@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "keycloak-profile",
+  "description": "Source-only SUDO policy for the FreeIPA-backed Keycloak login service.",
+  "policy_owner": "sudo",
+  "consumer_owners": ["init", "make"],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "identity": {
+    "authority": "freeipa",
+    "host_profile": "sudo/access/freeipa-host-profile.json",
+    "domain": "shell.internal",
+    "realm": "SHELL.INTERNAL",
+    "base_dn": "dc=shell,dc=internal",
+    "bind_principal": "keycloak-bind",
+    "bind_dn": "uid=keycloak-bind,cn=users,cn=accounts,dc=shell,dc=internal",
+    "groups": ["platform-admins", "platform-operators", "auditors"]
+  },
+  "service": {
+    "realm": "shell",
+    "hostname": "keycloak.shell-identity.svc.cluster.local",
+    "transport": "https",
+    "port": 443,
+    "target_port": 8443,
+    "external_endpoint": false,
+    "namespace": "shell-identity",
+    "name": "keycloak"
+  },
+  "trust": {
+    "freeipa_ca_handoff": ".local/sudo/keycloak/freeipa-ca.crt",
+    "storage": "private-local-file",
+    "file_mode": "0600",
+    "repository_tracked": false
+  },
+  "group_role_mapping": {
+    "platform-admins": "platform-admin",
+    "platform-operators": "platform-operator",
+    "auditors": "auditor"
+  },
+  "required_contracts": {
+    "input": {
+      "owner": "sudo",
+      "status": "source-defined",
+      "contract": "sudo/secrets/keycloak-input-contract.json"
+    },
+    "supply": {
+      "owner": "tar",
+      "status": "source-defined",
+      "contract": "tar/manifests/keycloak-supply.json"
+    },
+    "workload": {
+      "owner": "make",
+      "status": "source-defined",
+      "contract": "make/contracts/keycloak-login-requirements.json"
+    }
+  }
+}
