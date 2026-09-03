@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "k6-load-requirements",
+  "description": "WATCH source-only policy for a bounded release-feed k6 load check.",
+  "policy_owner": "watch",
+  "execution_owner": "make",
+  "consumer_owners": ["make", "watch"],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "namespace": "monitoring",
+  "approval": "environment-gcp/make/k6",
+  "image": "docker.io/grafana/k6:2.1.0@sha256:65c920dc067d5e2e00befbf982af6ad6ad0117034e8b1c65817c7975c52d4669",
+  "target_url": "https://release-feed.release-feed.svc.cluster.local/healthz",
+  "tls_verification": "enabled_with_sudo_root",
+  "rate_per_second": 5,
+  "duration_seconds": 120,
+  "expected_requests": 600,
+  "thresholds": {
+    "http_failure_rate_lt": 0.01,
+    "checks_rate_gte": 0.99,
+    "p95_ms_lt": 500
+  },
+  "resources": {
+    "requests": {"cpu": "50m", "memory": "64Mi", "ephemeral-storage": "32Mi"},
+    "limits": {"cpu": "250m", "memory": "256Mi", "ephemeral-storage": "128Mi"}
+  },
+  "excluded_fields": ["live_summary", "credentials", "external_target"]
+}

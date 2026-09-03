@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "kube-bench-requirements",
+  "description": "WATCH source-only policy for a temporary K3s kube-bench audit.",
+  "policy_owner": "watch",
+  "execution_owner": "make",
+  "consumer_owners": ["make", "watch"],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "namespace": "shell-security",
+  "approval": "environment-gcp/make/kube-bench",
+  "benchmark": "k3s-cis-1.9",
+  "image": "docker.io/aquasec/kube-bench:v0.16.0@sha256:75506f222d1eb6ce2a751a5533bdc0a3b54c898e2e49e7751d0ee22cfb862679",
+  "host_pid": true,
+  "privileged": false,
+  "host_paths": [
+    "/var/lib/cni",
+    "/var/lib/kubelet",
+    "/var/lib/rancher",
+    "/etc/systemd",
+    "/lib/systemd",
+    "/usr/bin",
+    "/etc/cni/net.d",
+    "/opt/cni/bin"
+  ],
+  "resources": {
+    "requests": {"cpu": "100m", "memory": "128Mi", "ephemeral-storage": "64Mi"},
+    "limits": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "256Mi"}
+  },
+  "gate": {"max_fail": 0, "max_warn": 0},
+  "excluded_fields": ["live_report", "node_addresses", "credentials"]
+}
