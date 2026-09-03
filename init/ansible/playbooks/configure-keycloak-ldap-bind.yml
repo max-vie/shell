@@ -1,0 +1,317 @@
+---
+# INIT owns the FreeIPA-side bind principal. MAKE consumes only the resulting
+# protected input and never changes identity policy from the cluster.
+# yamllint disable rule:line-length
+- name: Validate the Keycloak LDAP bind contract
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Validate all public SUDO access contracts
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../../sudo/scripts/validate_access_contracts.py"
+      check_mode: false
+      changed_when: false
+      tags: [always]
+
+    - name: Validate the TAR Keycloak image contract
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../../tar/scripts/validate_keycloak_supply.py"
+      check_mode: false
+      changed_when: false
+      tags: [always]
+
+    - name: Load the public FreeIPA and Keycloak profiles
+      ansible.builtin.include_vars:
+        file: "{{ item.file }}"
+        name: "{{ item.name }}"
+      loop:
+        - file: "{{ playbook_dir }}/../../../sudo/access/freeipa-host-profile.json"
+          name: shell_freeipa_profile
+        - file: "{{ playbook_dir }}/../../../sudo/access/keycloak-profile.json"
+          name: shell_keycloak_profile
+      loop_control:
+        label: "{{ item.name }}"
+      tags: [always]
+
+    - name: Require the fixed Keycloak bind boundary
+      ansible.builtin.assert:
+        that:
+          - shell_keycloak_profile.consumer_owners == ['init', 'make']
+          - shell_keycloak_profile.proof_status == 'source-only'
+          - shell_keycloak_profile.identity.authority == 'freeipa'
+          - shell_keycloak_profile.identity.bind_principal == 'keycloak-bind'
+          - shell_keycloak_profile.identity.bind_dn == 'uid=keycloak-bind,cn=users,cn=accounts,dc=shell,dc=internal'
+          - shell_keycloak_profile.service.external_endpoint is false
+          - shell_keycloak_profile.service.namespace == 'shell-identity'
+          - shell_keycloak_profile.service.name == 'keycloak'
+          - shell_freeipa_profile.host.name == 'identity-01'
+          - shell_freeipa_profile.host.ip_address == '10.77.0.210'
+          - shell_freeipa_profile.identity.realm == 'SHELL.INTERNAL'
+        fail_msg: The public identity or Keycloak bind contract changed.
+      tags: [always]
+
+    - name: Describe the Keycloak LDAP bind
+      ansible.builtin.debug:
+        msg: >-
+          Create or verify the read-only keycloak-bind principal on identity-01
+          and validate its LDAPS authentication without changing other users.
+      when: ansible_check_mode
+
+    - name: Stop after the public Keycloak bind preview
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+- name: Load the private Keycloak bind inputs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    shell_freeipa_profile: "{{ hostvars['localhost']['shell_freeipa_profile'] }}"
+    shell_keycloak_profile: "{{ hostvars['localhost']['shell_keycloak_profile'] }}"
+    shell_freeipa_secret_path: >-
+      {{ playbook_dir }}/../../../{{ shell_freeipa_profile.secret_contract.handoff }}
+    shell_freeipa_age_key_path: >-
+      {{ playbook_dir }}/../../../{{ shell_freeipa_profile.secret_contract.age_key }}
+    shell_keycloak_input_path: >-
+      {{ playbook_dir }}/../../../.local/sudo/keycloak/keycloak.sops.json
+    shell_keycloak_age_key_path: >-
+      {{ playbook_dir }}/../../../.local/sudo/keycloak/age-key.txt
+  pre_tasks:
+    - name: Stop before private input access in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Require the fixed Keycloak bind approval
+      ansible.builtin.assert:
+        that:
+          - shell_keycloak_approval == 'environment-gcp/init/keycloak-ldap-bind'
+        fail_msg: Keycloak LDAP bind configuration requires the fixed INIT approval.
+
+    - name: Inspect the private FreeIPA and Keycloak inputs
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      loop:
+        - "{{ shell_freeipa_secret_path }}"
+        - "{{ shell_freeipa_age_key_path }}"
+        - "{{ shell_keycloak_input_path }}"
+        - "{{ shell_keycloak_age_key_path }}"
+      register: shell_keycloak_private_files
+      no_log: true
+
+    - name: Require private Keycloak bind custody
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg
+          - not item.stat.islnk
+          - item.stat.mode == '0600'
+        fail_msg: Keycloak bind inputs must be private regular files.
+      loop: "{{ shell_keycloak_private_files.results }}"
+      no_log: true
+
+    - name: Decrypt the FreeIPA administrator input
+      ansible.builtin.command:
+        argv:
+          - sops
+          - --decrypt
+          - --output-type
+          - json
+          - "{{ shell_freeipa_secret_path }}"
+      environment:
+        SOPS_AGE_KEY_FILE: "{{ shell_freeipa_age_key_path }}"
+      changed_when: false
+      register: shell_freeipa_secret_result
+      no_log: true
+
+    - name: Decrypt the Keycloak input
+      ansible.builtin.command:
+        argv:
+          - sops
+          - --decrypt
+          - --output-type
+          - json
+          - "{{ shell_keycloak_input_path }}"
+      environment:
+        SOPS_AGE_KEY_FILE: "{{ shell_keycloak_age_key_path }}"
+      changed_when: false
+      register: shell_keycloak_secret_result
+      no_log: true
+
+    - name: Parse the private identity inputs
+      ansible.builtin.set_fact:
+        shell_freeipa_secret: "{{ shell_freeipa_secret_result.stdout | from_json }}"
+        shell_keycloak_secret: "{{ shell_keycloak_secret_result.stdout | from_json }}"
+      no_log: true
+
+    - name: Require the private Keycloak bind password contract
+      ansible.builtin.assert:
+        that:
+          - shell_freeipa_secret.admin_password is match('^[A-Za-z0-9]+$')
+          - shell_freeipa_secret.admin_password | length >= 20
+          - (shell_keycloak_secret.keys() | list | sort) == ['bootstrap_admin_password', 'bootstrap_admin_username', 'database_password', 'database_username', 'ldap_bind_password']
+          - shell_keycloak_secret.database_username == 'keycloak'
+          - shell_keycloak_secret.bootstrap_admin_username == 'sso-bootstrap'
+          - shell_keycloak_secret.ldap_bind_password is match('^[A-Za-z0-9]+$')
+          - shell_keycloak_secret.ldap_bind_password | length >= 32
+          - shell_keycloak_secret.ldap_bind_password | length <= 64
+        fail_msg: The private Keycloak bind input violates its SUDO contract.
+      no_log: true
+
+- name: Converge the Keycloak FreeIPA bind principal
+  hosts: identity_nodes
+  serial: 1
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  vars:
+    shell_freeipa_profile: "{{ hostvars['localhost']['shell_freeipa_profile'] }}"
+    shell_keycloak_profile: "{{ hostvars['localhost']['shell_keycloak_profile'] }}"
+    shell_freeipa_secret: "{{ hostvars['localhost']['shell_freeipa_secret'] }}"
+    shell_keycloak_secret: "{{ hostvars['localhost']['shell_keycloak_secret'] }}"
+    shell_identity_admin_ccache: FILE:/run/shell/keycloak-bind-admin.ccache
+    shell_keycloak_bind_dn: "{{ shell_keycloak_profile.identity.bind_dn }}"
+  environment:
+    KRB5CCNAME: "{{ shell_identity_admin_ccache }}"
+  pre_tasks:
+    - name: Stop before identity guest access in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Wait for the identity guest
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    - name: Gather identity guest facts
+      ansible.builtin.setup:
+
+    - name: Require the dedicated FreeIPA identity guest
+      ansible.builtin.assert:
+        that:
+          - groups.identity_nodes == ['identity-01']
+          - inventory_hostname == shell_freeipa_profile.host.name
+          - ansible_host == shell_freeipa_profile.host.ip_address
+          - shell_expected_address == shell_freeipa_profile.host.ip_address
+          - shell_role == 'identity'
+          - shell_cluster == 'shared'
+          - shell_transport == 'gcp_iap'
+          - ansible_facts.distribution == 'AlmaLinux'
+          - ansible_facts.distribution_major_version == '9'
+        fail_msg: The selected guest does not match the FreeIPA identity contract.
+
+    - name: Inspect the FreeIPA completion marker and configuration
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      loop:
+        - "{{ shell_freeipa_profile.runtime.completion_marker }}"
+        - /etc/ipa/default.conf
+      register: shell_keycloak_identity_files
+
+    - name: Build the immutable FreeIPA contract
+      ansible.builtin.set_fact:
+        shell_freeipa_immutable_contract:
+          fqdn: "{{ shell_freeipa_profile.host.fqdn }}"
+          ip_address: "{{ shell_freeipa_profile.host.ip_address }}"
+          realm: "{{ shell_freeipa_profile.identity.realm }}"
+          domain: "{{ shell_freeipa_profile.identity.domain }}"
+          dns_forwarders: "{{ shell_freeipa_profile.identity.dns_forwarders }}"
+
+    - name: Hash the immutable FreeIPA contract
+      ansible.builtin.set_fact:
+        shell_freeipa_contract_digest: >-
+          {{ shell_freeipa_immutable_contract | to_json | hash('sha256') }}
+
+    - name: Read the FreeIPA completion contract
+      ansible.builtin.slurp:
+        path: "{{ shell_freeipa_profile.runtime.completion_marker }}"
+      register: shell_freeipa_completion_contract
+      no_log: true
+
+    - name: Require a completed FreeIPA realm before adding the bind principal
+      ansible.builtin.assert:
+        that:
+          - shell_keycloak_identity_files.results[0].stat.exists
+          - shell_keycloak_identity_files.results[0].stat.isreg
+          - shell_keycloak_identity_files.results[0].stat.mode == '0600'
+          - shell_keycloak_identity_files.results[1].stat.exists
+          - shell_keycloak_identity_files.results[1].stat.isreg
+          - >-
+            (shell_freeipa_completion_contract.content | b64decode | trim) ==
+            ('contract_sha256=' + shell_freeipa_contract_digest)
+        fail_msg: FreeIPA must be complete before its Keycloak bind principal is changed.
+
+  tasks:
+    - name: Configure and verify the Keycloak bind principal
+      block:
+        - name: Create the private Kerberos cache directory
+          ansible.builtin.file:
+            path: /run/shell
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Authenticate the FreeIPA administrator
+          ansible.builtin.command:
+            argv: [kinit, admin]
+            stdin: "{{ shell_freeipa_secret.admin_password }}\n"
+          changed_when: false
+          no_log: true
+
+        - name: Inspect the Keycloak bind principal
+          ansible.builtin.command:
+            argv: [ipa, user-show, "{{ shell_keycloak_profile.identity.bind_principal }}"]
+          changed_when: false
+          failed_when: false
+          register: shell_keycloak_bind_state
+
+        - name: Create the Keycloak bind principal when absent
+          ansible.builtin.command:
+            argv:
+              - ipa
+              - user-add
+              - "{{ shell_keycloak_profile.identity.bind_principal }}"
+              - --first
+              - Keycloak
+              - --last
+              - LDAP
+              - --shell
+              - /sbin/nologin
+              - --password
+            stdin: "{{ shell_keycloak_secret.ldap_bind_password }}\n{{ shell_keycloak_secret.ldap_bind_password }}\n"
+          when: shell_keycloak_bind_state.rc != 0
+          changed_when: true
+          no_log: true
+
+        - name: Verify the bind principal over strict LDAPS
+          ansible.builtin.command:
+            argv:
+              - ldapwhoami
+              - -H
+              - "ldaps://{{ shell_freeipa_profile.host.fqdn }}:636"
+              - -x
+              - -D
+              - "{{ shell_keycloak_bind_dn }}"
+              - -w
+              - "{{ shell_keycloak_secret.ldap_bind_password }}"
+              - -o
+              - TLS_REQCERT=demand
+          environment:
+            LDAPTLS_CACERT: /etc/ipa/ca.crt
+          changed_when: false
+          no_log: true
+      always:
+        - name: Destroy the administrator credential cache
+          ansible.builtin.command:
+            argv: [kdestroy, -c, "{{ shell_identity_admin_ccache }}"]
+          changed_when: false
+          failed_when: false
+          no_log: true
+# yamllint enable rule:line-length
