@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "freeipa-supply",
+  "description": "TAR source contract for native FreeIPA packages on the shared identity host.",
+  "policy_owner": "tar",
+  "execution_owner": "init",
+  "proof_status": "source-reference-only",
+  "environment": "environment-gcp",
+  "consumer": "identity-01",
+  "acquisition": {
+    "mode": "native-dnf",
+    "distribution": "AlmaLinux",
+    "major_version": "9",
+    "repository_family": "AlmaLinux 9 native repositories",
+    "network_acquisition_owner": "init",
+    "consumer_network_acquisition": true
+  },
+  "packages": ["ipa-server", "ipa-server-dns", "samba-common-libs"]
+}
