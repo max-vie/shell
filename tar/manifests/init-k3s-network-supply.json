@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "init-k3s-network-supply",
+  "policy_owner": "tar",
+  "execution_owner": "init",
+  "proof_status": "source-reference-only",
+  "staging": {
+    "mode": "local-verified-artifacts",
+    "network_acquisition_owner": "tar",
+    "consumer_network_acquisition": false,
+    "artifact_directory": "init-k3s-network",
+    "chart_cache_layout": "charts/{name}-{version}.tgz"
+  },
+  "helm_binary": {
+    "version": "v3.18.4",
+    "file_name": "helm",
+    "source": "https://get.helm.sh/helm-v3.18.4-linux-amd64.tar.gz",
+    "source_sha256": "f8180838c23d7c7d797b208861fecb591d9ce1690d8704ed1e4cb8e2add966c1",
+    "archive_member": "linux-amd64/helm",
+    "sha256": "84d06a0f5ba17fd9c4d9912613453cdaa95a4f59c8baf20c195b74310b009ea6",
+    "size": 59715768,
+    "platform": "linux/amd64"
+  },
+  "cilium_chart": {
+    "repository": "https://helm.cilium.io/",
+    "name": "cilium",
+    "version": "1.18.2",
+    "source": "https://helm.cilium.io/cilium-1.18.2.tgz",
+    "sha256": "39b62a72f0892dd16548bd08ee97d5db2e975f7c1f57155578a144186e22992f",
+    "size": 229371,
+    "max_bytes": 4194304
+  },
+  "cilium_images": {
+    "agent": {
+      "repository": "quay.io/cilium/cilium",
+      "tag": "v1.18.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:858f807ea4e20e85e3ea3240a762e1f4b29f1cb5bbd0463b8aa77e7b097c0667"
+    },
+    "envoy": {
+      "repository": "quay.io/cilium/cilium-envoy",
+      "tag": "v1.34.7-1757592137-1a52bb680a956879722f48c591a2ca90f7791324",
+      "platform": "linux/amd64",
+      "digest": "sha256:7932d656b63f6f866b6732099d33355184322123cfe1182e6f05175a3bc2e0e0"
+    },
+    "operator": {
+      "repository": "quay.io/cilium/operator-generic",
+      "tag": "v1.18.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:cb4e4ffc5789fd5ff6a534e3b1460623df61cba00f5ea1c7b40153b5efb81805"
+    }
+  },
+  "cilium_configuration": {
+    "ipam_mode": "cluster-pool",
+    "tunnel_protocol": "vxlan",
+    "cni_exclusive": true,
+    "kube_proxy_replacement": true,
+    "socket_lb_enabled": true,
+    "socket_lb_host_namespace_only": true,
+    "operator_replicas": 1
+  }
+}
