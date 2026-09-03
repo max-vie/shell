@@ -1,129 +1,166 @@
 ---
-# Preview the selected AlmaLinux 9, FreeIPA domain, and DNS boundary without
-# reading private credentials or changing the identity host.
-- name: Preview the deferred identity service
-  hosts: identity_nodes
+# yamllint disable rule:line-length
+# Configure the shared AlmaLinux identity host from SUDO's public policy and
+# private encrypted input. INIT owns the host-side FreeIPA service only.
+- name: Validate the public FreeIPA identity contract
+  hosts: localhost
+  connection: local
   gather_facts: false
-  any_errors_fatal: true
-  vars_files:
-    - ../vars/contracts.yml
-  pre_tasks:
+  tasks:
     - name: Validate all public SUDO access contracts
       ansible.builtin.command:
         argv:
           - "{{ ansible_playbook_python }}"
-          - >-
-            {{ playbook_dir
-            }}/../../../sudo/scripts/validate_access_contracts.py
+          - "{{ playbook_dir }}/../../../sudo/scripts/validate_access_contracts.py"
       check_mode: false
       changed_when: false
-      become: false
-      delegate_to: localhost
-      run_once: true
       tags: [always]
 
-    - name: Load the public identity host profile
+    - name: Validate the TAR FreeIPA package contract
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/../../../tar/scripts/validate_freeipa_supply.py"
+      check_mode: false
+      changed_when: false
+      tags: [always]
+
+    - name: Load the public FreeIPA host profile
       ansible.builtin.include_vars:
-        file: >-
-          {{ playbook_dir }}/../../../sudo/access/freeipa-host-profile.json
+        file: "{{ playbook_dir }}/../../../sudo/access/freeipa-host-profile.json"
         name: shell_identity_profile
-      become: false
-      delegate_to: localhost
-      run_once: true
       tags: [always]
 
-    - name: Require the current identity execution boundary
+    - name: Require the fixed FreeIPA identity boundary
       ansible.builtin.assert:
         that:
+          - shell_identity_profile.contract_version == '2.1.0'
           - shell_identity_profile.policy_owner == 'sudo'
-          - "'init' in shell_identity_profile.consumer_owners"
+          - shell_identity_profile.consumer_owners == ['init']
           - shell_identity_profile.proof_status == 'source-only'
-          - >-
-            shell_identity_profile.inventory_group
-            == shell_identity_inventory_group
+          - shell_identity_profile.platform_scope == 'shared'
+          - shell_identity_profile.placement == 'gcp'
+          - shell_identity_profile.served_clusters == ['gcp', 'proxmox']
+          - shell_identity_profile.inventory_group == 'identity_nodes'
+          - groups.identity_nodes == ['identity-01']
           - shell_identity_profile.host.name == 'identity-01'
           - shell_identity_profile.host.fqdn == 'identity-01.shell.internal'
           - shell_identity_profile.host.ip_address == '10.77.0.210'
           - shell_identity_profile.host.operating_system == 'almalinux-9'
+          - shell_identity_profile.identity.authority == 'freeipa'
           - shell_identity_profile.identity.domain == 'shell.internal'
           - shell_identity_profile.identity.realm == 'SHELL.INTERNAL'
-          - shell_identity_profile.identity.dns_forwarders | length == 2
-          - >-
-            shell_identity_profile.required_contracts.operating_system.status
-            == 'source-defined'
-          - >-
-            shell_identity_profile.required_contracts.operating_system.value
-            == 'almalinux-9'
-          - >-
-            shell_identity_profile.required_contracts.operating_system.decision
-            == 'man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md'
-          - >-
-            shell_identity_profile.required_contracts.identity_configuration.status
-            == 'source-defined'
-          - >-
-            shell_identity_profile.secret_contract.private_values_tracked
-            == false
+          - shell_identity_profile.identity.proof_principals.allowed == 'shell-operator'
+          - shell_identity_profile.identity.proof_principals.denied == 'shell-denied'
+          - shell_identity_profile.runtime.implementation == 'native-packages'
           - shell_identity_profile.execution.owner == 'init'
-          - shell_identity_profile.execution.mode == 'contract-preview'
+          - shell_identity_profile.execution.mode == 'fixed-controller'
+          - shell_identity_profile.execution.status == 'source-defined'
+          - shell_identity_profile.private_custody.secret_store == 'sops-age'
+          - not shell_identity_profile.private_custody.plaintext_values_tracked
+          - shell_identity_profile.secret_contract.storage == 'sops-age'
+          - not shell_identity_profile.secret_contract.private_values_tracked
           - >-
-            shell_identity_profile.execution.status ==
-            'blocked-by-required-contracts'
-          - >-
-            shell_identity_profile.required_contracts.artifact_supply.status
-            == 'not-defined'
-          - >-
-            shell_identity_profile.required_contracts.identity_credentials.status
-            == 'source-defined'
-          - >-
-            shell_identity_profile.required_contracts.identity_credentials.handoff_status
-            == 'not-defined'
-          - groups[shell_identity_inventory_group] | length == 1
-          - >-
-            shell_identity_profile.host.name in
-            groups[shell_identity_inventory_group]
-          - >-
-            hostvars[shell_identity_profile.host.name].ansible_host ==
-            shell_identity_profile.host.ip_address
-        fail_msg: >-
-          The SUDO identity profile, INIT inventory, or deferred contract
-          boundary has changed.
-      become: false
-      delegate_to: localhost
-      run_once: true
+            shell_identity_profile.secret_contract.required_keys ==
+            ['directory_manager_password', 'admin_password',
+             'proof_operator_password', 'proof_denied_password']
+        fail_msg: The public SUDO FreeIPA contract does not match INIT's boundary.
       tags: [always]
 
-    - name: Require the selected identity inventory host
-      ansible.builtin.assert:
-        that:
-          - inventory_hostname == 'identity-01'
-          - ansible_host == '10.77.0.210'
-          - shell_expected_address == '10.77.0.210'
-          - shell_role | default('') == shell_identity_role
-          - shell_cluster | default('') == shell_identity_cluster
-          - shell_transport | default('') == shell_identity_transport
-          - (ansible_user | default('')) is string
-          - (ansible_user | default('')) | length > 0
-          - (ansible_user | default('')) != 'root'
-        fail_msg: The selected host does not match the identity contract.
-      tags: [always]
-
-    - name: Refuse identity mutation while runtime handoffs are incomplete
-      ansible.builtin.fail:
-        msg: >-
-          Identity mutation is not authorized by the source-only contracts.
-          Complete the private credential and AlmaLinux image and artifact
-          handoffs before extending this playbook.
-      when: not ansible_check_mode
-      tags: [always]
-
-  tasks:
-    - name: Describe the deferred identity configuration
+    - name: Describe the FreeIPA identity convergence
       ansible.builtin.debug:
         msg: >-
-          Identity configuration remains blocked until INIT supplies a
-          reviewed AlmaLinux 9 image, TAR defines the identity artifact
-          supply, and SUDO provides the private credential handoff.
+          Configure native FreeIPA and internal DNS on identity-01, create the
+          declared identity groups and proof principals, and publish the four
+          current managed DNS records.
       when: ansible_check_mode
+
+    - name: Stop after the public identity preview
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+- name: Load the private FreeIPA bootstrap input
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    shell_identity_profile: "{{ hostvars['localhost']['shell_identity_profile'] }}"
+    shell_identity_secret_path: >-
+      {{ playbook_dir }}/../../../{{ shell_identity_profile.secret_contract.handoff }}
+    shell_identity_age_key_path: >-
+      {{ playbook_dir }}/../../../{{ shell_identity_profile.secret_contract.age_key }}
+  pre_tasks:
+    - name: Stop before private input access in check mode
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
+
+    - name: Require the fixed identity apply approval
+      ansible.builtin.assert:
+        that:
+          - shell_identity_approval == 'environment-gcp/init/identity-service'
+        fail_msg: Identity apply requires the fixed INIT approval.
+
+    - name: Inspect the private FreeIPA input and age key
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      loop:
+        - "{{ shell_identity_secret_path }}"
+        - "{{ shell_identity_age_key_path }}"
+      register: shell_identity_private_files
+      no_log: true
+
+    - name: Require private FreeIPA custody
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg
+          - not item.stat.islnk
+          - item.stat.mode == '0600'
+        fail_msg: The FreeIPA input and age key must be private regular files.
+      loop: "{{ shell_identity_private_files.results }}"
+      no_log: true
+
+    - name: Decrypt the private FreeIPA bootstrap input
+      ansible.builtin.command:
+        argv:
+          - sops
+          - --decrypt
+          - --output-type
+          - json
+          - "{{ shell_identity_secret_path }}"
+      environment:
+        SOPS_AGE_KEY_FILE: "{{ shell_identity_age_key_path }}"
+      changed_when: false
+      register: shell_identity_secret_result
+      no_log: true
+
+    - name: Parse the private FreeIPA bootstrap input
+      ansible.builtin.set_fact:
+        shell_identity_secret: "{{ shell_identity_secret_result.stdout | from_json }}"
+      no_log: true
+
+    - name: Require the private FreeIPA password contract
+      ansible.builtin.assert:
+        that:
+          - shell_identity_secret is mapping
+          - >-
+            (shell_identity_secret.keys() | list | sort) ==
+            (shell_identity_profile.secret_contract.required_keys | sort)
+          - shell_identity_secret.directory_manager_password is match('^[A-Za-z0-9]+$')
+          - shell_identity_secret.directory_manager_password | length >= 20
+          - shell_identity_secret.directory_manager_password | length <= 30
+          - shell_identity_secret.admin_password is match('^[A-Za-z0-9]+$')
+          - shell_identity_secret.admin_password | length >= 20
+          - shell_identity_secret.admin_password | length <= 64
+          - shell_identity_secret.proof_operator_password is match('^[A-Za-z0-9]+$')
+          - shell_identity_secret.proof_operator_password | length >= 20
+          - shell_identity_secret.proof_operator_password | length <= 64
+          - shell_identity_secret.proof_denied_password is match('^[A-Za-z0-9]+$')
+          - shell_identity_secret.proof_denied_password | length >= 20
+          - shell_identity_secret.proof_denied_password | length <= 64
+        fail_msg: The decrypted FreeIPA input violates the SUDO password contract.
+      no_log: true
 
     - name: Stop after the identity contract preview
       ansible.builtin.meta: end_play
