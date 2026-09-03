@@ -1,0 +1,75 @@
+{
+  "description": "WATCH source-only tracing policy and evidence contract.",
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "tracing-requirements",
+  "policy_owner": "watch",
+  "producer_owners": ["tar", "make"],
+  "consumer_owners": ["make", "watch"],
+  "proof_status": "source-only",
+  "environment": "environment-gcp",
+  "cluster": {
+    "name": "gcp",
+    "inventory_group": "gcp_k3s_servers",
+    "first_server": "gcp-k3s-01",
+    "first_server_address": "10.77.0.201",
+    "nodes": ["gcp-k3s-01", "gcp-k3s-02", "gcp-k3s-03"]
+  },
+  "source_contracts": {
+    "supply": "tar/manifests/kubernetes-ecosystem-supply.json",
+    "tempo_application": "make/gitops/applications/children/tempo.yaml",
+    "tempo_values": "make/gitops/values/tempo.yaml",
+    "otel_application": "make/gitops/applications/children/otel.yaml",
+    "otel_values": "make/gitops/values/otel.yaml"
+  },
+  "tempo": {
+    "application": "watch-tempo",
+    "release": "tempo",
+    "namespace": "monitoring",
+    "chart": "tempo",
+    "chart_version": "1.24.4",
+    "statefulset": "tempo",
+    "service": "tempo",
+    "replicas": 1,
+    "service_type": "ClusterIP",
+    "query_port": 3200,
+    "otlp_ports": {"grpc": 4317, "http": 4318},
+    "image": "docker.io/grafana/tempo:2.9.0",
+    "storage": {"class": "longhorn", "size": "2Gi", "backend": "local"},
+    "retention": "24h",
+    "public_route": false
+  },
+  "collector": {
+    "application": "watch-opentelemetry",
+    "release": "shell-otel",
+    "namespace": "monitoring",
+    "chart": "opentelemetry-collector",
+    "chart_version": "0.165.0",
+    "deployment": "shell-otel",
+    "service": "shell-otel",
+    "replicas": 1,
+    "service_type": "ClusterIP",
+    "otlp_ports": {"grpc": 4317, "http": 4318},
+    "metrics_port": 8889,
+    "image": "otel/opentelemetry-collector-contrib:0.159.0",
+    "trace_export_endpoint": "http://tempo.monitoring.svc.cluster.local:4318",
+    "metrics_export": "prometheus:8889",
+    "host_access": false,
+    "cluster_rbac": false,
+    "persistent_storage": false
+  },
+  "evidence": [
+    "Tempo StatefulSet has one ready replica and a bound Longhorn claim",
+    "OpenTelemetry Deployment has one ready replica",
+    "Tempo and the collector expose only cluster-local service paths",
+    "Tempo readiness responds through an operator port-forward"
+  ],
+  "excluded_fields": [
+    "instrumented_application_trace",
+    "trace_search_result",
+    "live_pod_logs",
+    "credentials",
+    "public_ingress"
+  ],
+  "failure_policy": "read-only-diagnosis"
+}
