@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "contract_id": "identity-model",
   "description": "Source-only default-deny identity groups for INIT and MAKE consumers.",
   "policy_owner": "sudo",
@@ -21,8 +21,8 @@
   },
   "default_access": "deny",
   "implementation": {
-    "init": "host-and-directory-groups",
+    "init": "freeipa-host-and-directory-groups",
     "make": "workload-authorization",
-    "status": "not-defined"
+    "status": "source-defined"
   }
 }

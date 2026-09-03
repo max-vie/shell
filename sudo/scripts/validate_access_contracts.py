@@ -981,7 +981,7 @@ def validate_kubernetes(document: dict[str, Any], repository_root: Path) -> None
         label=label,
         contract_id="kubernetes-ecosystem-profile",
         consumers=["make"],
-        fields={"cluster_scope", "identity", "required_contracts"},
+        fields={"cluster_scope", "identity", "admission_trust", "required_contracts"},
     )
     require(document["cluster_scope"] == CLUSTERS, "Kubernetes cluster scope changed")
     identity = document["identity"]
@@ -1008,13 +1008,21 @@ def validate_kubernetes(document: dict[str, Any], repository_root: Path) -> None
     require(
         document["required_contracts"]
         == {
-            "authentication_integration": {"owner": "make", "status": "not-defined"},
+            "authentication_integration": {
+                "owner": "make",
+                "status": "source-defined",
+                "contract": "sudo/access/keycloak-profile.json",
+            },
             "workload_authorization": {
                 "owner": "make",
                 "policy_owner": "sudo",
                 "status": "not-defined",
             },
-            "service_endpoints": {"owner": "make", "status": "not-defined"},
+            "service_endpoints": {
+                "owner": "make",
+                "status": "source-defined",
+                "contract": "sudo/access/keycloak-profile.json",
+            },
             "cluster_trust": {
                 "owner": "make",
                 "status": "source-defined",
@@ -1024,12 +1032,34 @@ def validate_kubernetes(document: dict[str, Any], repository_root: Path) -> None
         },
         "Kubernetes required contracts changed",
     )
+    require(
+        document["admission_trust"]
+        == {
+            "owner": "sudo",
+            "status": "source-defined",
+            "contract": "sudo/secrets/cosign-trust-input-contract.json",
+        },
+        "Kubernetes admission trust changed",
+    )
+    require_reference(
+        document["admission_trust"]["contract"],
+        expected="sudo/secrets/cosign-trust-input-contract.json",
+        repository_root=repository_root,
+        label="Kubernetes admission trust contract",
+    )
     require_reference(
         document["required_contracts"]["cluster_trust"]["contract"],
         expected="make/contracts/cluster-trust-requirements.json",
         repository_root=repository_root,
         label="Kubernetes cluster-trust contract",
     )
+    for name in ("authentication_integration", "service_endpoints"):
+        require_reference(
+            document["required_contracts"][name]["contract"],
+            expected="sudo/access/keycloak-profile.json",
+            repository_root=repository_root,
+            label=f"Kubernetes {name} contract",
+        )
 
 
 def validate_kubernetes_input_contract(repository_root: Path) -> None:
@@ -1106,6 +1136,147 @@ def validate_kubernetes_input_contract(repository_root: Path) -> None:
     )
 
 
+def validate_cosign_trust_input_contract(repository_root: Path) -> None:
+    label = "Cosign trust input contract"
+    path = repository_root / "sudo/secrets/cosign-trust-input-contract.json"
+    document = read_json_object(path, label, repository_root=repository_root)
+    require_common(
+        document,
+        label=label,
+        contract_id="cosign-trust-input-contract",
+        consumers=["make"],
+        fields={
+            "environment",
+            "private_custody",
+            "input",
+            "public_trust",
+            "repository_policy",
+        },
+    )
+    require(document["environment"] == "environment-gcp", "Cosign input environment changed")
+    require(
+        document["private_custody"]
+        == {
+            "root": ".local/sudo/kubernetes/cosign",
+            "storage": SOPS_AGE,
+            "ignored": True,
+            "directory_mode": "0700",
+            "file_mode": "0600",
+            "plaintext_values_tracked": False,
+            "publication": "create-only",
+        },
+        "Cosign private custody changed",
+    )
+    require(
+        document["input"]
+        == {
+            "path": ".local/sudo/kubernetes/cosign/cosign.sops.json",
+            "public_handoff": ".local/sudo/kubernetes/cosign/cosign-public.sops.json",
+            "age_key": ".local/sudo/kubernetes/cosign/age-key.txt",
+            "cosign_binary": ".local/tar/kubernetes/tools/cosign",
+            "format": "sops-age-json",
+            "required_keys": ["private_key", "password", "public_key"],
+            "public_required_keys": ["public_key"],
+            "private_key_format": "encrypted-sigstore-private-key-pem",
+            "public_key_format": "public-key-pem",
+            "password": {
+                "min_length": 32,
+                "max_length": 64,
+                "character_set": "ascii-alphanumeric",
+            },
+        },
+        "Cosign input shape changed",
+    )
+    require(
+        document["public_trust"]
+        == {
+            "namespace": "shell-trust",
+            "secret_name": "cosign-public-keys",
+            "key": "cosign.pub",
+            "handoff_status": "not-defined",
+        },
+        "Cosign public trust handoff changed",
+    )
+    require(
+        document["repository_policy"]
+        == {"contract_tracked": True, "private_values_tracked": False},
+        "Cosign input repository policy changed",
+    )
+
+
+def validate_velero_gcs_input_contract(repository_root: Path) -> None:
+    label = "Velero GCS input contract"
+    path = repository_root / "sudo/secrets/velero-gcs-input-contract.json"
+    document = read_json_object(path, label, repository_root=repository_root)
+    require_common(
+        document,
+        label=label,
+        contract_id="velero-gcs-input-contract",
+        consumers=["make"],
+        fields={
+            "environment",
+            "private_custody",
+            "input",
+            "bucket",
+            "repository_policy",
+        },
+    )
+    require(document["environment"] == "environment-gcp", "Velero GCS environment changed")
+    require(
+        document["private_custody"]
+        == {
+            "root": ".local/init/gcs-backup",
+            "storage": "init-generated-service-account-key",
+            "ignored": True,
+            "directory_mode": "0700",
+            "file_mode": "0600",
+            "plaintext_values_tracked": False,
+            "publication": "create-only",
+        },
+        "Velero GCS private custody changed",
+    )
+    require(
+        document["input"]
+        == {
+            "path": ".local/init/gcs-backup/credentials.json",
+            "format": "google-service-account-json",
+            "producer": "init/opentofu/gcs-backup",
+            "service_account_id": "velero-backup",
+            "required_keys": [
+                "type",
+                "project_id",
+                "private_key_id",
+                "private_key",
+                "client_email",
+                "client_id",
+                "auth_uri",
+                "token_uri",
+                "auth_provider_x509_cert_url",
+                "client_x509_cert_url",
+            ],
+            "private_key_format": "pkcs8-pem",
+            "rotation": "explicit-approved",
+        },
+        "Velero GCS input shape changed",
+    )
+    require(
+        document["bucket"]
+        == {
+            "name_source": "init/opentofu/gcs-backup bucket_name input",
+            "location": "europe-west4",
+            "role": "roles/storage.objectAdmin",
+            "public_access_prevention": "enforced",
+            "uniform_bucket_level_access": True,
+        },
+        "Velero GCS bucket policy changed",
+    )
+    require(
+        document["repository_policy"]
+        == {"contract_tracked": True, "private_values_tracked": False},
+        "Velero GCS repository policy changed",
+    )
+
+
 def validate_k3s_server_token_contract(repository_root: Path) -> None:
     """Run the SUDO-owned server-token validator as part of the aggregate gate."""
 
@@ -1174,10 +1345,15 @@ def validate_contracts(
     }
     validate_identity(documents["identity"])
     validate_freeipa(documents["freeipa"], repository_root)
+    validate_freeipa_input_contract(repository_root)
+    validate_keycloak(documents["keycloak"], repository_root)
+    validate_keycloak_input_contract(repository_root)
     validate_delivery(documents["delivery"], repository_root)
     validate_delivery_input_contract(repository_root)
     validate_kubernetes(documents["kubernetes"], repository_root)
     validate_kubernetes_input_contract(repository_root)
+    validate_cosign_trust_input_contract(repository_root)
+    validate_velero_gcs_input_contract(repository_root)
     validate_k3s_server_token_contract(repository_root)
     validate_stateful_input_contracts(repository_root)
     return documents
@@ -1189,7 +1365,7 @@ def main() -> int:
     except AccessContractError as error:
         print(f"access contract validation failed: {error}", file=sys.stderr)
         return 2
-    print(f"validated {len(documents)} SUDO access profiles and 5 handoff contracts")
+    print(f"validated {len(documents)} SUDO access profiles and 9 handoff contracts")
     return 0
 
 

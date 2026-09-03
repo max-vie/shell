@@ -13,10 +13,16 @@
     "identity_model": "sudo/access/identity-model.json",
     "required_groups": ["platform-admins", "platform-operators", "auditors"]
   },
+  "admission_trust": {
+    "owner": "sudo",
+    "status": "source-defined",
+    "contract": "sudo/secrets/cosign-trust-input-contract.json"
+  },
   "required_contracts": {
     "authentication_integration": {
       "owner": "make",
-      "status": "not-defined"
+      "status": "source-defined",
+      "contract": "sudo/access/keycloak-profile.json"
     },
     "workload_authorization": {
       "owner": "make",
@@ -25,7 +31,8 @@
     },
     "service_endpoints": {
       "owner": "make",
-      "status": "not-defined"
+      "status": "source-defined",
+      "contract": "sudo/access/keycloak-profile.json"
     },
     "cluster_trust": {
       "owner": "make",

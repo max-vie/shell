@@ -44,6 +44,13 @@ class TestAccessContracts(unittest.TestCase):
             "make/contracts/cluster-trust-requirements.json",
             "man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
             "sudo/secrets/kubernetes-ecosystem-input-contract.json",
+            "tar/manifests/freeipa-supply.json",
+            "sudo/secrets/freeipa-input-contract.json",
+            "sudo/secrets/keycloak-input-contract.json",
+            "tar/manifests/keycloak-supply.json",
+            "make/contracts/keycloak-login-requirements.json",
+            "sudo/secrets/cosign-trust-input-contract.json",
+            "sudo/secrets/velero-gcs-input-contract.json",
             "sudo/pki/shell-offline-root.crt.pem",
             "sudo/scripts/generate_k3s_server_tokens.py",
             "sudo/secrets/k3s-server-token-contract.json",
@@ -444,7 +451,7 @@ class TestAccessContracts(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(
             stdout.getvalue(),
-            "validated 4 SUDO access profiles and 5 handoff contracts\n",
+            "validated 5 SUDO access profiles and 9 handoff contracts\n",
         )
 
 
