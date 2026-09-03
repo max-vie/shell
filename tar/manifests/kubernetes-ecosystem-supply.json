@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "contract_version": "1.0.0",
   "contract_id": "kubernetes-ecosystem-supply",
-  "description": "TAR source pins for the MAKE cert-manager trust slice.",
+  "description": "TAR source pins for the MAKE Kubernetes ecosystem slices.",
   "policy_owner": "tar",
   "execution_owner": "make",
   "proof_status": "source-reference-only",
@@ -19,7 +19,50 @@
       "name": "cert-manager",
       "version": "v1.21.0",
       "source": "https://charts.jetstack.io/charts/cert-manager-v1.21.0.tgz",
-      "sha256": "9c2c6fabf3cf8fe14dacb016f37c819b66bc2c79e8b7acde4573d45ec141fb97"
+      "sha256": "9c2c6fabf3cf8fe14dacb016f37c819b66bc2c79e8b7acde4573d45ec141fb97",
+      "size": 153302,
+      "max_bytes": 16777216,
+      "redirect_hosts": []
+    },
+    "kyverno": {
+      "repository": "https://kyverno.github.io/kyverno/",
+      "name": "kyverno",
+      "version": "3.8.2",
+      "source": "https://kyverno.github.io/kyverno/kyverno-3.8.2.tgz",
+      "sha256": "f4fc787cf1d6781eefb9e9b45837edcddcfae984c872888289914e97207cc5de",
+      "size": 719383,
+      "max_bytes": 16777216,
+      "redirect_hosts": []
+    },
+    "velero": {
+      "repository": "https://vmware-tanzu.github.io/helm-charts",
+      "name": "velero",
+      "version": "12.1.0",
+      "source": "https://github.com/vmware-tanzu/helm-charts/releases/download/velero-12.1.0/velero-12.1.0.tgz",
+      "sha256": "cd23589ad1b2d25cdd3220f6866b3f6f4c5683c4c09494e76a14700b33f81f83",
+      "size": 42489,
+      "max_bytes": 16777216,
+      "redirect_hosts": ["github.com", "release-assets.githubusercontent.com"]
+    },
+    "tempo": {
+      "repository": "https://grafana.github.io/helm-charts",
+      "name": "tempo",
+      "version": "1.24.4",
+      "source": "https://github.com/grafana/helm-charts/releases/download/tempo-1.24.4/tempo-1.24.4.tgz",
+      "sha256": "f1f6e318d5bca3b5097cb676077796cdf8135beb2c1f71c4d14614ccf9b0081b",
+      "size": 13508,
+      "max_bytes": 16777216,
+      "redirect_hosts": ["github.com", "release-assets.githubusercontent.com"]
+    },
+    "opentelemetry-collector": {
+      "repository": "https://open-telemetry.github.io/opentelemetry-helm-charts",
+      "name": "opentelemetry-collector",
+      "version": "0.165.0",
+      "source": "https://github.com/open-telemetry/opentelemetry-helm-charts/releases/download/opentelemetry-collector-0.165.0/opentelemetry-collector-0.165.0.tgz",
+      "sha256": "b592ea064d9b906930cac2d22b88eeb1bc82f12d5ed07fd20792de2c051ca3c5",
+      "size": 39531,
+      "max_bytes": 16777216,
+      "redirect_hosts": ["github.com", "release-assets.githubusercontent.com"]
     }
   },
   "images": {
@@ -46,6 +89,122 @@
       "tag": "v1.21.0",
       "platform": "linux/amd64",
       "digest": "sha256:68b3c5029dc63e64a6b6435337d7dc0eb169f889a48a02d999d1f22f31865b33"
+    },
+    "reg.kyverno.io/kyverno/kyverno:v1.18.2": {
+      "repository": "reg.kyverno.io/kyverno/kyverno",
+      "tag": "v1.18.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:0a540e2ddf74d0d2d3d45f9ef248d7dbc96576accdbcc6a2dd7eaff9fea56504"
+    },
+    "reg.kyverno.io/kyverno/kyvernopre:v1.18.2": {
+      "repository": "reg.kyverno.io/kyverno/kyvernopre",
+      "tag": "v1.18.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:cd8cb4a31d25b3992734fb8f24a90ef691c90ce49338c89bea96792160eacb98"
+    },
+    "reg.kyverno.io/kyverno/background-controller:v1.18.2": {
+      "repository": "reg.kyverno.io/kyverno/background-controller",
+      "tag": "v1.18.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:d62566ce41bd0d4a32bf2cf44b9ebfc02c36374f821f83070890287f62f68671"
+    },
+    "reg.kyverno.io/kyverno/cleanup-controller:v1.18.2": {
+      "repository": "reg.kyverno.io/kyverno/cleanup-controller",
+      "tag": "v1.18.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:b0395d29ae332276e6910eb40418be9bc127c068d659f90aa1bcddd6be99ccb4"
+    },
+    "reg.kyverno.io/kyverno/reports-controller:v1.18.2": {
+      "repository": "reg.kyverno.io/kyverno/reports-controller",
+      "tag": "v1.18.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:f09cf305170014e191b94e1c54f5be73163d8824eefad49349675c4efe43159a"
+    },
+    "ghcr.io/kyverno/readiness-checker:v1.18.2": {
+      "repository": "ghcr.io/kyverno/readiness-checker",
+      "tag": "v1.18.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:4fb1870b1a4adfed0fa7a32b7c3bcaf736fb889c7e1947ee8b20710bc2f5a5ce"
+    },
+    "docker.io/velero/velero:v1.18.2": {
+      "repository": "docker.io/velero/velero",
+      "tag": "v1.18.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:37396519f399536e5f01427d723565ae69294ec3fb5625cf1c87c09eaa9de16b"
+    },
+    "docker.io/velero/velero-plugin-for-gcp:v1.14.2": {
+      "repository": "docker.io/velero/velero-plugin-for-gcp",
+      "tag": "v1.14.2",
+      "platform": "linux/amd64",
+      "digest": "sha256:f4c0b7d1e69f7dbc721e2dc7eca20a9720d06f7c5e021ccc3cd57df6bb505f7b"
+    },
+    "registry.k8s.io/sig-storage/snapshot-controller:v8.6.0": {
+      "repository": "registry.k8s.io/sig-storage/snapshot-controller",
+      "tag": "v8.6.0",
+      "platform": "linux/amd64",
+      "digest": "sha256:81e79f205083f105e573ba2ebfe5964ede7f69a154e8627f53ebbbccd3ed9f70"
+    },
+    "docker.io/grafana/tempo:2.9.0": {
+      "repository": "docker.io/grafana/tempo",
+      "tag": "2.9.0",
+      "platform": "linux/amd64",
+      "digest": "sha256:65a5789759435f1ef696f1953258b9bbdb18eb571d5ce711ff812d2e128288a4"
+    },
+    "otel/opentelemetry-collector-contrib:0.159.0": {
+      "repository": "otel/opentelemetry-collector-contrib",
+      "tag": "0.159.0",
+      "platform": "linux/amd64",
+      "digest": "sha256:1f2c54a30e713fac6b3ae77a1ec84010c2007e29ced8ec666214fc2f6739c1cc"
+    },
+    "docker.io/aquasec/trivy:0.73.0": {
+      "repository": "docker.io/aquasec/trivy",
+      "tag": "0.73.0",
+      "platform": "linux/amd64",
+      "digest": "sha256:7cced7cae583819fc7806d4cbc0dbbc7cad18b99f7d3e235192e6da8c091045c"
+    },
+    "docker.io/aquasec/kube-bench:v0.16.0": {
+      "repository": "docker.io/aquasec/kube-bench",
+      "tag": "v0.16.0",
+      "platform": "linux/amd64",
+      "digest": "sha256:75506f222d1eb6ce2a751a5533bdc0a3b54c898e2e49e7751d0ee22cfb862679"
+    },
+    "docker.io/grafana/k6:2.1.0": {
+      "repository": "docker.io/grafana/k6",
+      "tag": "2.1.0",
+      "platform": "linux/amd64",
+      "digest": "sha256:65c920dc067d5e2e00befbf982af6ad6ad0117034e8b1c65817c7975c52d4669"
+    }
+  },
+  "tools": {
+    "cosign": {
+      "version": "2.6.4",
+      "platform": "linux/amd64",
+      "source": "https://github.com/sigstore/cosign/releases/download/v2.6.4/cosign-linux-amd64",
+      "source_sha256": "309779b0c4e409186b0a80daba99041fe2cf65a920ce645013901df6211895a9",
+      "size": 137225408,
+      "max_bytes": 268435456,
+      "file_name": "cosign",
+      "mode": "0700",
+      "redirect_hosts": ["github.com", "release-assets.githubusercontent.com"]
+    },
+    "trivy": {
+      "version": "0.73.0",
+      "image": "docker.io/aquasec/trivy:0.73.0"
+    },
+    "kube-bench": {
+      "version": "0.16.0",
+      "image": "docker.io/aquasec/kube-bench:v0.16.0"
+    },
+    "k6": {
+      "version": "2.1.0",
+      "image": "docker.io/grafana/k6:2.1.0"
+    },
+    "skopeo": {
+      "version": "1.22.2",
+      "binary": "skopeo",
+      "execution_host": "delivery-01",
+      "authfile_mode": "0600",
+      "preserve_digests": true
     }
   }
 }
