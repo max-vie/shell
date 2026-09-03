@@ -37,9 +37,9 @@ readiness, and K3s API health need separate approved execution and evidence.
 
 SUDO owns the source-only FreeIPA policy for `identity-01` and the trust and
 private-input boundary for `delivery-01`. The identity target is AlmaLinux 9,
-which is RHEL-compatible. INIT records the separate GCP image contract and
-keeps the identity host out of the direct-GCP Debian baseline group, but does
-not yet prepare or prove the identity image.
+which is RHEL-compatible. INIT keeps the identity host out of the direct-GCP
+Debian baseline group, validates the fixed GCP IAP route, and owns the native
+FreeIPA bootstrap and host verification.
 
 TAR owns the source-reference delivery image lock. MAKE owns the delivery-node
 consumer requirements and the later Forgejo service deployment. INIT consumes
@@ -52,14 +52,65 @@ The delivery image tags and linux/amd64 digests were resolved through registry
 inspection on 26.08.2026. The lock remains source-reference-only because the
 images have not been acquired, staged, signature-verified, or run.
 
-The refusal gates apply when Ansible selects the declared role group and runs
-the `always` pre-tasks. An empty or excluded target can produce a no-host
-result, so these previews must be wrapped by an exact-target preflight before
-any mutation tasks are added.
+The identity controller checks the generated single-host target before Ansible
+starts. Its check mode validates the public SUDO and TAR contracts and stops
+before the private SOPS input, guest connection, or package operation. Apply
+mode requires the exact identity approval and private handoff.
 
-No FreeIPA package installation, credential generation, image acquisition,
-guest startup, Forgejo deployment, or live DNS proof is included in this
-source-only boundary.
+SUDO can generate the encrypted FreeIPA input only after its separate approval.
+TAR's package contract remains source-reference-only, so package availability,
+guest startup, realm convergence, authentication, and live DNS proof remain
+separate evidence gates. The separate Keycloak bind controller requires its
+own approval and private input, but only changes the FreeIPA bind principal;
+the Keycloak workload remains MAKE-owned. Forgejo deployment and consumer
+enrollment are not part of the identity service.
+
+### Keycloak identity handoff
+
+INIT owns only the FreeIPA-side `keycloak-bind` principal. Its fixed bind
+controller validates the SUDO Keycloak profile and TAR image contract, checks
+the completed FreeIPA marker, and verifies LDAPS without changing other
+directory users. MAKE owns the cluster-local Keycloak Deployment, PostgreSQL
+StatefulSet, Secrets, and GitOps resources. External Keycloak routing and
+downstream OIDC client configuration are deferred.
+
+### Velero GCS foundation
+
+INIT owns the separate `opentofu/gcs-backup` root for the private, versioned
+GCS bucket and dedicated `velero-backup` service account. The sensitive JSON
+key is an explicit output written only to ignored `.local/init/gcs-backup/`
+state. MAKE consumes that handoff for the Velero Secret; no OpenTofu state,
+provider, bucket, or key operation is run by the source checks.
+
+### Tempo and OpenTelemetry tracing
+
+MAKE owns the cluster-local Tempo and OpenTelemetry Collector applications in
+the existing `monitoring` namespace. TAR supplies their checksum-locked Helm
+charts and digest-pinned images. WATCH owns the separate tracing contract and
+read-only readiness verification. Tempo uses a 2 GiB Longhorn claim with
+24-hour local retention; the collector exports traces over the internal Tempo
+OTLP HTTP service and exposes its metrics on port `8889` for Prometheus.
+
+The source slice does not include an instrumented application, public trace
+route, external object store, host discovery, or collector cluster RBAC. A
+successful source check proves configuration and policy only. A live WATCH
+check can prove readiness and service exposure, but it does not prove trace
+ingestion or search.
+
+### Security, load, and image transfer tooling
+
+TAR owns the digest-locked Trivy, kube-bench, and k6 tool images plus the
+offline Trivy report gate. WATCH owns the kube-bench CIS policy, the bounded
+release-feed load policy, and create-only evidence. MAKE owns the temporary
+Kubernetes resources used by those checks; each live run requires its exact
+approval and fixed GCP kubeconfig.
+
+Skopeo is a delivery-host dependency recorded with the existing `delivery-01`
+contract. Its transfer controller accepts one locked image at a time, uses an
+authfile created only on the delivery host, preserves the source digest, and
+refuses a conflicting existing destination. Source previews and synthetic
+tests do not prove vulnerability coverage, CIS results, load behavior, or
+Harbor publication.
 
 ### GCP platform add-ons
 
@@ -98,6 +149,7 @@ Kubernetes storage and load-balancer behavior.
 | Proxmox API token | SUDO | OpenTofu Proxmox provider | Private process environment or wrapper |
 | SSH agent and key material | SUDO and the execution environment | OpenTofu image upload and Ansible | SSH agent or private files outside Git |
 | K3s server token | SUDO | INIT K3s playbooks | Fixed per-cluster path derived by INIT |
+| Cilium network supply | TAR | INIT K3s playbooks | Ignored `.local/tar/init-k3s-network/` and `.local/ansible/k3s-network-supply.json` |
 | Administrator kubeconfig | INIT | Later cluster consumers | Ignored `.local/ansible/kubeconfig/` state, mode `0600` |
 
 Keep credentials, private keys, token values, kubeconfigs, state, plans, and
@@ -120,8 +172,11 @@ to the guest token file with mode `0600`. The first server uses the short
 server-token form because a self-signed certificate-authority hash does not
 exist before startup. K3s later writes secure token material that must remain
 protected and be backed up with the matching datastore. The playbook renders
-the K3s configuration with mode `0600` and exports the administrator kubeconfig
-to ignored local state. The complete K3s contract lives in
+the K3s configuration with mode `0600`, disables Flannel, its built-in network
+policy controller, and kube-proxy, then installs the pinned Cilium foundation
+after all three servers join. The Cilium chart and values are temporary guest
+inputs and the administrator kubeconfig is exported to ignored local state.
+The complete K3s contract lives in
 [`k3s-runtime.md`](k3s-runtime.md).
 
 ### OpenBao handoff
@@ -150,6 +205,16 @@ token issuance, or retrieval.
 | Rendered Ansible inventory | `.local/ansible/inventory.json` | `init/scripts/render_node_inventory.py` |
 | Private Ansible connection inventory | `.local/ansible/connection-inventory.yml` | private INIT input |
 | K3s runtime variables | `.local/ansible/k3s-runtime/<cluster>.json` | private INIT input |
+| FreeIPA encrypted bootstrap input | `.local/sudo/identity/freeipa.sops.json` | SUDO input generator |
+| FreeIPA age identity | `.local/sudo/identity/age-key.txt` | SUDO private custody |
+| Keycloak encrypted input | `.local/sudo/keycloak/keycloak.sops.json` | SUDO input generator |
+| Keycloak age identity | `.local/sudo/keycloak/age-key.txt` | SUDO private custody |
+| FreeIPA CA handoff for Keycloak | `.local/sudo/keycloak/freeipa-ca.crt` | authorized identity handoff |
+| Identity controller temporary variables | `.local/ansible/.identity-service/` | INIT controller, removed after run |
+| Velero GCS credentials | `.local/init/gcs-backup/credentials.json` | sensitive INIT output consumed by MAKE |
+| Velero GCS OpenTofu state | `.local/opentofu/gcs-backup/` | INIT backup root |
+| Cosign trust handoffs | `.local/sudo/kubernetes/cosign/` | SUDO private custody consumed by MAKE |
+| Tempo and collector runtime state | cluster-local `monitoring` resources | MAKE GitOps applications |
 | K3s administrator kubeconfig | `.local/ansible/kubeconfig/` | K3s configuration playbook |
 | Prepared image inputs and outputs | `.local/init-images/` | `init/images/` |
 | Proxmox image-upload temporary files | Private `PROXMOX_VE_TMPDIR` | Proxmox provider wrapper |
