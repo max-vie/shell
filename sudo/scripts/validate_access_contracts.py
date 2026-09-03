@@ -16,13 +16,19 @@ CONTRACT_FILES = {
     "delivery": "delivery-host-profile.json",
     "freeipa": "freeipa-host-profile.json",
     "identity": "identity-model.json",
+    "keycloak": "keycloak-profile.json",
     "kubernetes": "kubernetes-ecosystem-profile.json",
 }
 CONTRACT_VERSIONS = {
     "delivery-host-profile": "2.0.0",
     "delivery-input-contract": "1.0.0",
-    "freeipa-host-profile": "2.0.0",
-    "identity-model": "1.0.0",
+    "freeipa-host-profile": "2.1.0",
+    "freeipa-input-contract": "1.0.0",
+    "velero-gcs-input-contract": "1.0.0",
+    "identity-model": "1.1.0",
+    "cosign-trust-input-contract": "1.0.0",
+    "keycloak-input-contract": "1.0.0",
+    "keycloak-profile": "1.0.0",
     "kubernetes-ecosystem-profile": "1.0.0",
     "kubernetes-ecosystem-input-contract": "1.0.0",
 }
@@ -179,9 +185,9 @@ def validate_identity(document: dict[str, Any]) -> None:
     require(
         document["implementation"]
         == {
-            "init": "host-and-directory-groups",
+            "init": "freeipa-host-and-directory-groups",
             "make": "workload-authorization",
-            "status": "not-defined",
+            "status": "source-defined",
         },
         "identity implementation boundary changed",
     )
@@ -207,6 +213,7 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
             "private_custody",
             "secret_contract",
             "required_contracts",
+            "runtime",
         },
     )
     require(document["platform_scope"] == "shared", "FreeIPA scope changed")
@@ -234,6 +241,7 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
             "dns_forwarders",
             "roles",
             "groups",
+            "proof_principals",
             "identity_model",
         },
         "FreeIPA identity shape changed",
@@ -247,6 +255,11 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
     )
     require(identity["roles"] == ["identity", "internal-dns"], "FreeIPA roles changed")
     require(identity["groups"] == GROUPS, "FreeIPA groups changed")
+    require(
+        identity["proof_principals"]
+        == {"allowed": "shell-operator", "denied": "shell-denied"},
+        "FreeIPA proof principals changed",
+    )
     require_reference(
         identity["identity_model"],
         expected="sudo/access/identity-model.json",
@@ -315,8 +328,8 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
     )
     require(
         execution["owner"] == "init"
-        and execution["mode"] == "contract-preview"
-        and execution["status"] == "blocked-by-required-contracts",
+        and execution["mode"] == "fixed-controller"
+        and execution["status"] == "source-defined",
         "FreeIPA execution boundary changed",
     )
     require_reference(
@@ -332,16 +345,44 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
             "ignored": True,
             "directory_mode": "0700",
             "file_mode": "0600",
-            "secret_store": UNDECIDED,
+            "secret_store": SOPS_AGE,
+            "plaintext_values_tracked": False,
+            "publication": "create-only",
         },
         "FreeIPA private custody changed",
     )
     require(
         document["secret_contract"]
         == {
-            "storage": UNDECIDED,
+            "format": "sops-age-json",
+            "storage": SOPS_AGE,
             "handoff_root": ".local/sudo/identity",
+            "handoff": ".local/sudo/identity/freeipa.sops.json",
+            "age_key": ".local/sudo/identity/age-key.txt",
             "private_values_tracked": False,
+            "constraints": {
+                "directory_manager_password": {
+                    "min_length": 20,
+                    "max_length": 30,
+                    "character_set": "ascii-alphanumeric",
+                    "reason": "FreeIPA directory-server password compatibility",
+                },
+                "admin_password": {
+                    "min_length": 20,
+                    "max_length": 64,
+                    "character_set": "ascii-alphanumeric",
+                },
+                "proof_operator_password": {
+                    "min_length": 20,
+                    "max_length": 64,
+                    "character_set": "ascii-alphanumeric",
+                },
+                "proof_denied_password": {
+                    "min_length": 20,
+                    "max_length": 64,
+                    "character_set": "ascii-alphanumeric",
+                },
+            },
             "required_keys": [
                 "directory_manager_password",
                 "admin_password",
@@ -362,7 +403,8 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
             "identity_credentials": {
                 "owner": "sudo",
                 "status": "source-defined",
-                "handoff_status": "not-defined",
+                "handoff_status": "generated-locally-after-approval",
+                "contract": "sudo/secrets/freeipa-input-contract.json",
                 "required_keys": [
                     "directory_manager_password",
                     "admin_password",
@@ -377,7 +419,11 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
                 "status": "source-defined",
                 "value": "almalinux-9",
             },
-            "artifact_supply": {"owner": "tar", "status": "not-defined"},
+            "artifact_supply": {
+                "owner": "tar",
+                "status": "source-defined",
+                "contract": "tar/manifests/freeipa-supply.json",
+            },
         },
         "FreeIPA required contracts changed",
     )
@@ -386,6 +432,278 @@ def validate_freeipa(document: dict[str, Any], repository_root: Path) -> None:
         expected="man/docs/adr/006-use-almalinux-9-for-freeipa-identity-host.md",
         repository_root=repository_root,
         label="FreeIPA operating-system decision",
+    )
+    require_reference(
+        document["required_contracts"]["artifact_supply"]["contract"],
+        expected="tar/manifests/freeipa-supply.json",
+        repository_root=repository_root,
+        label="FreeIPA artifact supply",
+    )
+    require(
+        document["runtime"]
+        == {
+            "implementation": "native-packages",
+            "packages": ["ipa-server", "ipa-server-dns"],
+            "completion_marker": "/var/lib/shell/freeipa-install-complete",
+            "ports": {
+                "tcp": [53, 80, 88, 389, 443, 464, 636],
+                "udp": [53, 88, 464],
+            },
+        },
+        "FreeIPA runtime contract changed",
+    )
+
+
+def validate_freeipa_input_contract(repository_root: Path) -> None:
+    label = "FreeIPA input contract"
+    path = repository_root / "sudo/secrets/freeipa-input-contract.json"
+    document = read_json_object(path, label, repository_root=repository_root)
+    require_common(
+        document,
+        label=label,
+        contract_id="freeipa-input-contract",
+        consumers=["init"],
+        fields={"environment", "private_custody", "input", "repository_policy"},
+    )
+    require(document["environment"] == "environment-gcp", "FreeIPA input environment changed")
+    require(
+        document["private_custody"]
+        == {
+            "root": ".local/sudo/identity",
+            "storage": SOPS_AGE,
+            "ignored": True,
+            "directory_mode": "0700",
+            "file_mode": "0600",
+            "plaintext_values_tracked": False,
+            "publication": "create-only",
+        },
+        "FreeIPA input private custody changed",
+    )
+    require(
+        document["input"]
+        == {
+            "path": ".local/sudo/identity/freeipa.sops.json",
+            "age_key": ".local/sudo/identity/age-key.txt",
+            "format": "sops-age-json",
+            "required_keys": [
+                "directory_manager_password",
+                "admin_password",
+                "proof_operator_password",
+                "proof_denied_password",
+            ],
+            "constraints": {
+                "directory_manager_password": {
+                    "min_length": 20,
+                    "max_length": 30,
+                    "character_set": "ascii-alphanumeric",
+                    "reason": "FreeIPA directory-server password compatibility",
+                },
+                "admin_password": {
+                    "min_length": 20,
+                    "max_length": 64,
+                    "character_set": "ascii-alphanumeric",
+                },
+                "proof_operator_password": {
+                    "min_length": 20,
+                    "max_length": 64,
+                    "character_set": "ascii-alphanumeric",
+                },
+                "proof_denied_password": {
+                    "min_length": 20,
+                    "max_length": 64,
+                    "character_set": "ascii-alphanumeric",
+                },
+            },
+        },
+        "FreeIPA input contract changed",
+    )
+    require(
+        document["repository_policy"]
+        == {"contract_tracked": True, "private_values_tracked": False},
+        "FreeIPA input repository policy changed",
+    )
+
+
+def validate_keycloak(document: dict[str, Any], repository_root: Path) -> None:
+    label = "Keycloak profile"
+    require_common(
+        document,
+        label=label,
+        contract_id="keycloak-profile",
+        consumers=["init", "make"],
+        fields={
+            "environment",
+            "identity",
+            "service",
+            "trust",
+            "group_role_mapping",
+            "required_contracts",
+        },
+    )
+    require(document["environment"] == "environment-gcp", "Keycloak environment changed")
+    require(
+        document["identity"]
+        == {
+            "authority": "freeipa",
+            "host_profile": "sudo/access/freeipa-host-profile.json",
+            "domain": "shell.internal",
+            "realm": "SHELL.INTERNAL",
+            "base_dn": "dc=shell,dc=internal",
+            "bind_principal": "keycloak-bind",
+            "bind_dn": "uid=keycloak-bind,cn=users,cn=accounts,dc=shell,dc=internal",
+            "groups": GROUPS,
+        },
+        "Keycloak identity policy changed",
+    )
+    require_reference(
+        document["identity"]["host_profile"],
+        expected="sudo/access/freeipa-host-profile.json",
+        repository_root=repository_root,
+        label="Keycloak FreeIPA host profile",
+    )
+    require(
+        document["service"]
+        == {
+            "realm": "shell",
+            "hostname": "keycloak.shell-identity.svc.cluster.local",
+            "transport": "https",
+            "port": 443,
+            "target_port": 8443,
+            "external_endpoint": False,
+            "namespace": "shell-identity",
+            "name": "keycloak",
+        },
+        "Keycloak service boundary changed",
+    )
+    require(
+        document["trust"]
+        == {
+            "freeipa_ca_handoff": ".local/sudo/keycloak/freeipa-ca.crt",
+            "storage": "private-local-file",
+            "file_mode": "0600",
+            "repository_tracked": False,
+        },
+        "Keycloak trust handoff changed",
+    )
+    require(
+        document["group_role_mapping"]
+        == {
+            "platform-admins": "platform-admin",
+            "platform-operators": "platform-operator",
+            "auditors": "auditor",
+        },
+        "Keycloak group mapping changed",
+    )
+    require(
+        document["required_contracts"]
+        == {
+            "input": {
+                "owner": "sudo",
+                "status": "source-defined",
+                "contract": "sudo/secrets/keycloak-input-contract.json",
+            },
+            "supply": {
+                "owner": "tar",
+                "status": "source-defined",
+                "contract": "tar/manifests/keycloak-supply.json",
+            },
+            "workload": {
+                "owner": "make",
+                "status": "source-defined",
+                "contract": "make/contracts/keycloak-login-requirements.json",
+            },
+        },
+        "Keycloak required contracts changed",
+    )
+    require_reference(
+        document["required_contracts"]["input"]["contract"],
+        expected="sudo/secrets/keycloak-input-contract.json",
+        repository_root=repository_root,
+        label="Keycloak input contract",
+    )
+    require_reference(
+        document["required_contracts"]["supply"]["contract"],
+        expected="tar/manifests/keycloak-supply.json",
+        repository_root=repository_root,
+        label="Keycloak supply contract",
+    )
+    require_reference(
+        document["required_contracts"]["workload"]["contract"],
+        expected="make/contracts/keycloak-login-requirements.json",
+        repository_root=repository_root,
+        label="Keycloak workload contract",
+    )
+
+
+def validate_keycloak_input_contract(repository_root: Path) -> None:
+    label = "Keycloak input contract"
+    path = repository_root / "sudo/secrets/keycloak-input-contract.json"
+    document = read_json_object(path, label, repository_root=repository_root)
+    require_common(
+        document,
+        label=label,
+        contract_id="keycloak-input-contract",
+        consumers=["init", "make"],
+        fields={"environment", "private_custody", "input", "trust", "repository_policy"},
+    )
+    require(document["environment"] == "environment-gcp", "Keycloak input environment changed")
+    require(
+        document["private_custody"]
+        == {
+            "root": ".local/sudo/keycloak",
+            "storage": SOPS_AGE,
+            "ignored": True,
+            "directory_mode": "0700",
+            "file_mode": "0600",
+            "plaintext_values_tracked": False,
+            "publication": "create-only",
+        },
+        "Keycloak input private custody changed",
+    )
+    require(
+        document["input"]
+        == {
+            "path": ".local/sudo/keycloak/keycloak.sops.json",
+            "age_key": ".local/sudo/keycloak/age-key.txt",
+            "format": "sops-age-json",
+            "required_keys": [
+                "database_username",
+                "database_password",
+                "bootstrap_admin_username",
+                "bootstrap_admin_password",
+                "ldap_bind_password",
+            ],
+            "fixed_values": {
+                "database_username": "keycloak",
+                "bootstrap_admin_username": "sso-bootstrap",
+            },
+            "secret_keys": [
+                "database_password",
+                "bootstrap_admin_password",
+                "ldap_bind_password",
+            ],
+            "secret_constraints": {
+                "min_length": 32,
+                "max_length": 64,
+                "character_set": "ascii-alphanumeric",
+            },
+        },
+        "Keycloak input shape changed",
+    )
+    require(
+        document["trust"]
+        == {
+            "freeipa_ca_path": ".local/sudo/keycloak/freeipa-ca.crt",
+            "file_mode": "0600",
+            "source": "authorized INIT identity CA handoff",
+            "repository_tracked": False,
+        },
+        "Keycloak input trust handoff changed",
+    )
+    require(
+        document["repository_policy"]
+        == {"contract_tracked": True, "private_values_tracked": False},
+        "Keycloak input repository policy changed",
     )
 
 
