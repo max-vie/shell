@@ -162,6 +162,374 @@
         fail_msg: The decrypted FreeIPA input violates the SUDO password contract.
       no_log: true
 
-    - name: Stop after the identity contract preview
+- name: Configure the native FreeIPA identity service
+  hosts: identity_nodes
+  serial: 1
+  gather_facts: false
+  any_errors_fatal: true
+  become: true
+  vars:
+    shell_identity_profile: "{{ hostvars['localhost']['shell_identity_profile'] }}"
+    shell_identity_secret: "{{ hostvars['localhost']['shell_identity_secret'] }}"
+    shell_identity_admin_ccache: FILE:/run/shell/freeipa-admin.ccache
+    shell_identity_install_packages: >-
+      {{ shell_identity_profile.runtime.packages + ['samba-common-libs'] }}
+  environment:
+    KRB5CCNAME: "{{ shell_identity_admin_ccache }}"
+  pre_tasks:
+    - name: Stop before identity guest access in check mode
       ansible.builtin.meta: end_play
       when: ansible_check_mode
+
+    - name: Wait for the identity guest
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 10
+        timeout: 300
+
+    - name: Gather identity guest facts
+      ansible.builtin.setup:
+
+    - name: Require the dedicated AlmaLinux identity host
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == shell_identity_profile.host.name
+          - ansible_host == shell_identity_profile.host.ip_address
+          - shell_expected_address == shell_identity_profile.host.ip_address
+          - shell_role == 'identity'
+          - shell_cluster == 'shared'
+          - shell_transport == 'gcp_iap'
+          - ansible_facts.distribution == 'AlmaLinux'
+          - ansible_facts.distribution_major_version == '9'
+        fail_msg: The selected guest does not match the FreeIPA host contract.
+
+  tasks:
+    - name: Build the immutable FreeIPA contract
+      ansible.builtin.set_fact:
+        shell_identity_immutable_contract:
+          fqdn: "{{ shell_identity_profile.host.fqdn }}"
+          ip_address: "{{ shell_identity_profile.host.ip_address }}"
+          realm: "{{ shell_identity_profile.identity.realm }}"
+          domain: "{{ shell_identity_profile.identity.domain }}"
+          dns_forwarders: "{{ shell_identity_profile.identity.dns_forwarders }}"
+
+    - name: Hash the immutable FreeIPA contract
+      ansible.builtin.set_fact:
+        shell_identity_contract_digest: >-
+          {{ shell_identity_immutable_contract | to_json | hash('sha256') }}
+
+    - name: Inspect the FreeIPA completion marker
+      ansible.builtin.stat:
+        path: "{{ shell_identity_profile.runtime.completion_marker }}"
+        follow: false
+      register: shell_identity_completion
+
+    - name: Inspect the native FreeIPA configuration
+      ansible.builtin.stat:
+        path: /etc/ipa/default.conf
+        follow: false
+      register: shell_identity_configuration
+
+    - name: Require a safe existing FreeIPA completion marker
+      ansible.builtin.assert:
+        that:
+          - >-
+            not shell_identity_completion.stat.exists or
+            shell_identity_completion.stat.isreg
+          - >-
+            not shell_identity_completion.stat.exists or
+            shell_identity_completion.stat.mode == '0600'
+        fail_msg: The existing FreeIPA completion marker is unsafe.
+
+    - name: Read the existing FreeIPA completion contract
+      ansible.builtin.slurp:
+        path: "{{ shell_identity_profile.runtime.completion_marker }}"
+      when: shell_identity_completion.stat.exists
+      register: shell_identity_completion_contract
+      no_log: true
+
+    - name: Refuse to adopt a partial or different FreeIPA installation
+      ansible.builtin.assert:
+        that:
+          - shell_identity_completion.stat.exists or not shell_identity_configuration.stat.exists
+          - >-
+            not shell_identity_completion.stat.exists or
+            (shell_identity_completion_contract.content | b64decode | trim) ==
+            ('contract_sha256=' + shell_identity_contract_digest)
+        fail_msg: >-
+          FreeIPA is partial or its immutable contract differs. Rebuild the
+          disposable identity guest or recover it explicitly before retrying.
+
+    - name: Set the identity host FQDN
+      ansible.builtin.hostname:
+        name: "{{ shell_identity_profile.host.fqdn }}"
+        use: systemd
+
+    - name: Pin the identity host FQDN locally
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^{{ shell_identity_profile.host.ip_address | regex_escape }}\\s+'
+        line: >-
+          {{ shell_identity_profile.host.ip_address }}
+          {{ shell_identity_profile.host.fqdn }}
+          {{ shell_identity_profile.host.name }}
+        state: present
+
+    - name: Install the native FreeIPA packages
+      ansible.builtin.dnf:
+        name: "{{ shell_identity_install_packages }}"
+        state: present
+        update_cache: true
+
+    - name: Build the DNS forwarder arguments
+      ansible.builtin.set_fact:
+        shell_identity_forwarder_args: >-
+          {{ (shell_identity_forwarder_args | default([])) +
+             ['--forwarder=' + item] }}
+      loop: "{{ shell_identity_profile.identity.dns_forwarders }}"
+      changed_when: false
+
+    - name: Initialize the native FreeIPA server
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['ipa-server-install', '--unattended',
+             '--hostname=' + shell_identity_profile.host.fqdn,
+             '--realm=' + shell_identity_profile.identity.realm,
+             '--domain=' + shell_identity_profile.identity.domain,
+             '--ds-password=' + shell_identity_secret.directory_manager_password,
+             '--admin-password=' + shell_identity_secret.admin_password,
+             '--no-ntp', '--setup-dns', '--no-reverse',
+             '--ip-address=' + shell_identity_profile.host.ip_address]
+            + shell_identity_forwarder_args
+          }}
+      async: 1800
+      poll: 10
+      when: not shell_identity_completion.stat.exists
+      changed_when: true
+      no_log: true
+
+    - name: Create the FreeIPA completion marker directory
+      ansible.builtin.file:
+        path: "{{ shell_identity_profile.runtime.completion_marker | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Publish the FreeIPA completion marker
+      ansible.builtin.copy:
+        content: "contract_sha256={{ shell_identity_contract_digest }}\n"
+        dest: "{{ shell_identity_profile.runtime.completion_marker }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: not shell_identity_completion.stat.exists
+
+    - name: Converge and verify FreeIPA identity data
+      block:
+        - name: Create the private Kerberos cache directory
+          ansible.builtin.file:
+            path: /run/shell
+            state: directory
+            owner: root
+            group: root
+            mode: "0700"
+
+        - name: Authenticate the FreeIPA administrator
+          ansible.builtin.command:
+            argv: [kinit, admin]
+            stdin: "{{ shell_identity_secret.admin_password }}\n"
+          changed_when: false
+
+        - name: Inspect declared FreeIPA groups
+          ansible.builtin.command:
+            argv: [ipa, group-show, "{{ item }}"]
+          loop: "{{ shell_identity_profile.identity.groups }}"
+          changed_when: false
+          failed_when: false
+          register: shell_identity_groups
+
+        - name: Create missing FreeIPA groups
+          ansible.builtin.command:
+            argv:
+              - ipa
+              - group-add
+              - "{{ item.item }}"
+              - --desc
+              - SHELL managed identity group
+          loop: "{{ shell_identity_groups.results }}"
+          when: item.rc != 0
+          changed_when: true
+
+        - name: Inspect proof principals
+          ansible.builtin.command:
+            argv: [ipa, user-show, "{{ item.name }}"]
+          loop:
+            - name: "{{ shell_identity_profile.identity.proof_principals.allowed }}"
+              first: Shell
+              last: Operator
+              password: "{{ shell_identity_secret.proof_operator_password }}"
+            - name: "{{ shell_identity_profile.identity.proof_principals.denied }}"
+              first: Shell
+              last: Denied
+              password: "{{ shell_identity_secret.proof_denied_password }}"
+          loop_control:
+            label: "{{ item.name }}"
+          changed_when: false
+          failed_when: false
+          register: shell_identity_principals
+
+        - name: Create missing proof principals
+          ansible.builtin.command:
+            argv:
+              - ipa
+              - user-add
+              - "{{ item.item.name }}"
+              - --first
+              - "{{ item.item.first }}"
+              - --last
+              - "{{ item.item.last }}"
+              - --password
+            stdin: "{{ item.item.password }}\n{{ item.item.password }}\n"
+          loop: "{{ shell_identity_principals.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+          when: item.rc != 0
+          changed_when: true
+
+        - name: Inspect platform-operators membership
+          ansible.builtin.command:
+            argv: [ipa, group-show, platform-operators, --all, --raw]
+          changed_when: false
+          register: shell_identity_operator_group
+
+        - name: Add the allowed proof principal to platform-operators
+          ansible.builtin.command:
+            argv:
+              - ipa
+              - group-add-member
+              - platform-operators
+              - --users
+              - "{{ shell_identity_profile.identity.proof_principals.allowed }}"
+          when: >-
+            shell_identity_profile.identity.proof_principals.allowed not in
+            shell_identity_operator_group.stdout
+          changed_when: true
+
+        - name: Inspect final platform-operators membership
+          ansible.builtin.command:
+            argv: [ipa, group-show, platform-operators, --all, --raw]
+          changed_when: false
+          register: shell_identity_final_operator_group
+
+        - name: Inspect declared managed DNS records
+          ansible.builtin.command:
+            argv: [ipa, dnsrecord-show, "{{ item.zone }}", "{{ item.name }}", --all, --raw]
+          loop: "{{ shell_identity_profile.managed_dns_records }}"
+          loop_control:
+            label: "{{ item.fqdn }}"
+          changed_when: false
+          failed_when: false
+          register: shell_identity_dns_records
+
+        - name: Create missing managed DNS records
+          ansible.builtin.command:
+            argv:
+              - ipa
+              - dnsrecord-add
+              - "{{ item.item.zone }}"
+              - "{{ item.item.name }}"
+              - --a-rec
+              - "{{ item.item.address }}"
+          loop: "{{ shell_identity_dns_records.results }}"
+          loop_control:
+            label: "{{ item.item.fqdn }}"
+          when: item.rc != 0
+          changed_when: true
+
+        - name: Refuse ambiguous managed DNS records
+          ansible.builtin.assert:
+            that:
+              - >-
+                item.rc != 0 or
+                (item.stdout | regex_findall('(?m)^\\s*arecord: ([^\\s]+)\\s*$') | length) <= 1
+            fail_msg: >-
+              Refusing to overwrite multiple A records for {{ item.item.fqdn }};
+              reconcile that record explicitly first.
+          loop: "{{ shell_identity_dns_records.results }}"
+          loop_control:
+            label: "{{ item.item.fqdn }}"
+
+        - name: Replace drifted managed DNS records
+          ansible.builtin.command:
+            argv:
+              - ipa
+              - dnsrecord-mod
+              - "{{ item.item.zone }}"
+              - "{{ item.item.name }}"
+              - --a-rec
+              - "{{ item.item.address }}"
+          loop: "{{ shell_identity_dns_records.results }}"
+          loop_control:
+            label: "{{ item.item.fqdn }}"
+          when:
+            - item.rc == 0
+            - >-
+              item.stdout | regex_findall('(?m)^\\s*arecord: ([^\\s]+)\\s*$')
+              != [item.item.address]
+          changed_when: true
+
+        - name: Read final managed DNS records
+          ansible.builtin.command:
+            argv: [ipa, dnsrecord-show, "{{ item.zone }}", "{{ item.name }}", --all, --raw]
+          loop: "{{ shell_identity_profile.managed_dns_records }}"
+          loop_control:
+            label: "{{ item.fqdn }}"
+          changed_when: false
+          register: shell_identity_final_dns
+
+        - name: Require exact managed DNS answers
+          ansible.builtin.assert:
+            that:
+              - >-
+                item.stdout | regex_findall('(?m)^\\s*arecord: ([^\\s]+)\\s*$')
+                == [item.item.address]
+            fail_msg: "Managed DNS drift remains for {{ item.item.fqdn }}."
+          loop: "{{ shell_identity_final_dns.results }}"
+          loop_control:
+            label: "{{ item.item.fqdn }}"
+
+        - name: Verify native FreeIPA service health
+          ansible.builtin.command:
+            argv: [ipactl, status]
+          changed_when: false
+          register: shell_identity_status
+
+        - name: Require running FreeIPA services and deny-by-default membership
+          ansible.builtin.assert:
+            that:
+              - "'Directory Service: RUNNING' in shell_identity_status.stdout"
+              - "'krb5kdc Service: RUNNING' in shell_identity_status.stdout"
+              - "'httpd Service: RUNNING' in shell_identity_status.stdout"
+              - >-
+                shell_identity_profile.identity.proof_principals.allowed in
+                shell_identity_final_operator_group.stdout
+              - >-
+                shell_identity_profile.identity.proof_principals.denied not in
+                shell_identity_final_operator_group.stdout
+            fail_msg: FreeIPA health or proof-principal membership is invalid.
+
+        - name: Verify declared FreeIPA TCP listeners
+          ansible.builtin.wait_for:
+            host: "{{ shell_identity_profile.host.ip_address }}"
+            port: "{{ item }}"
+            timeout: 10
+          loop: "{{ shell_identity_profile.runtime.ports.tcp }}"
+      always:
+        - name: Destroy the bootstrap administrator credential cache
+          ansible.builtin.command:
+            argv: [kdestroy, -c, "{{ shell_identity_admin_ccache }}"]
+          changed_when: false
+          failed_when: false
+          no_log: true
+# yamllint enable rule:line-length
