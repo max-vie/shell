@@ -10,7 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
+from unittest import mock
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = SOURCE_ROOT / "init/scripts/run_k3s_runtime.py"
@@ -32,13 +33,39 @@ class TestK3sRuntimeLauncher(unittest.TestCase):
             ".local/ansible/.k3s-runtime",
             ".local/tar",
             ".local/tar/init-k3s-runtime",
+            ".local/tar/init-k3s-network",
+            ".local/tar/init-k3s-network/charts",
             "tar/manifests",
             "init/ansible/playbooks",
         ):
             self._mkdir_private(self.root / directory)
+        self._network_patches = [
+            mock.patch.object(
+                launcher.network_supply,
+                "EXPECTED_HELM_BINARY",
+                {
+                    **launcher.network_supply.EXPECTED_HELM_BINARY,
+                    "sha256": hashlib.sha256(b"test-helm").hexdigest(),
+                    "size": len(b"test-helm"),
+                },
+            ),
+            mock.patch.object(
+                launcher.network_supply,
+                "EXPECTED_CILIUM_CHART",
+                {
+                    **launcher.network_supply.EXPECTED_CILIUM_CHART,
+                    "sha256": hashlib.sha256(b"test-cilium-chart").hexdigest(),
+                    "size": len(b"test-cilium-chart"),
+                },
+            ),
+        ]
+        for patcher in self._network_patches:
+            patcher.start()
         self._write_inputs()
 
     def tearDown(self) -> None:
+        for patcher in reversed(self._network_patches):
+            patcher.stop()
         self.temporary.cleanup()
 
     @staticmethod
@@ -140,6 +167,12 @@ class TestK3sRuntimeLauncher(unittest.TestCase):
         digest = hashlib.sha256(binary).hexdigest()
         binary_path = self.root / ".local/tar/init-k3s-runtime/k3s"
         self._write_private(binary_path, binary)
+        helm = b"test-helm"
+        helm_path = self.root / ".local/tar/init-k3s-network/helm"
+        self._write_private(helm_path, helm)
+        chart = b"test-cilium-chart"
+        chart_path = self.root / ".local/tar/init-k3s-network/charts/cilium-1.18.2.tgz"
+        self._write_private(chart_path, chart)
         lock = {
             "schema_version": "1.0",
             "contract_version": "1.0.0",
@@ -173,6 +206,46 @@ class TestK3sRuntimeLauncher(unittest.TestCase):
                 }
             ),
         )
+        network_lock = {
+            "schema_version": "1.0",
+            "contract_version": "1.0.0",
+            "contract_id": "init-k3s-network-supply",
+            "policy_owner": "tar",
+            "execution_owner": "init",
+            "proof_status": "source-reference-only",
+            "staging": {
+                "mode": "local-verified-artifacts",
+                "network_acquisition_owner": "tar",
+                "consumer_network_acquisition": False,
+                "artifact_directory": "init-k3s-network",
+                "chart_cache_layout": "charts/{name}-{version}.tgz",
+            },
+            "helm_binary": dict(launcher.network_supply.EXPECTED_HELM_BINARY),
+            "cilium_chart": dict(launcher.network_supply.EXPECTED_CILIUM_CHART),
+            "cilium_images": launcher.network_supply.EXPECTED_CILIUM_IMAGES,
+            "cilium_configuration": launcher.network_supply.EXPECTED_CILIUM_CONFIGURATION,
+        }
+        self._write_private(
+            self.root / ".local/ansible/k3s-network-supply.json",
+            json.dumps(
+                {
+                    "shell_k3s_helm_version": network_lock["helm_binary"]["version"],
+                    "shell_k3s_helm_path": str(helm_path),
+                    "shell_k3s_helm_sha256": network_lock["helm_binary"]["sha256"],
+                    "shell_k3s_cilium_chart_path": str(chart_path),
+                    "shell_k3s_cilium_chart_sha256": network_lock["cilium_chart"][
+                        "sha256"
+                    ],
+                    "shell_k3s_cilium_chart_version": network_lock["cilium_chart"][
+                        "version"
+                    ],
+                    "shell_k3s_cilium_images": network_lock["cilium_images"],
+                    "shell_k3s_cilium_configuration": network_lock[
+                        "cilium_configuration"
+                    ],
+                }
+            ),
+        )
         self._write_private(
             self.root / ".local/ansible/k3s-runtime/gcp.json",
             json.dumps(
@@ -198,6 +271,9 @@ class TestK3sRuntimeLauncher(unittest.TestCase):
         )
         (self.root / "tar/manifests/init-k3s-runtime-supply.json").write_text(
             json.dumps(lock), encoding="utf-8"
+        )
+        (self.root / "tar/manifests/init-k3s-network-supply.json").write_text(
+            json.dumps(network_lock), encoding="utf-8"
         )
         (self.root / "init/ansible/playbooks/configure-k3s-runtime.yml").write_text(
             "---\n", encoding="utf-8"
@@ -244,6 +320,9 @@ class TestK3sRuntimeLauncher(unittest.TestCase):
         self.assertNotIn("--start-at-task", command)
         self.assertEqual(captured["shell_k3s_cluster_name"], "gcp")
         self.assertEqual(captured["shell_k3s_target_group"], "gcp_k3s_servers")
+        self.assertEqual(captured["shell_k3s_cilium_chart_version"], "1.18.2")
+        configuration = cast(dict[str, Any], captured["shell_k3s_cilium_configuration"])
+        self.assertTrue(configuration["cni_exclusive"])
         self.assertNotIn("shell_k3s_token_path", captured)
         self.assertEqual(
             list((self.root / ".local/ansible/.k3s-runtime").iterdir()), []
@@ -319,6 +398,26 @@ class TestK3sRuntimeLauncher(unittest.TestCase):
         with self.assertRaisesRegex(launcher.RuntimeLauncherError, "unreserved"):
             launcher.load_inventory(path, "gcp", self.root)
 
+    def test_rejects_gcp_service_frontend_addresses_as_api_endpoints(self) -> None:
+        for address in ("10.77.0.221", "10.77.0.222"):
+            with self.subTest(address=address):
+                self._write_inventory("gcp")
+                path = self.root / ".local/ansible/inventory.json"
+                inventory = json.loads(path.read_text(encoding="utf-8"))
+                variables = inventory["all"]["children"]["shell_nodes"]["children"][
+                    "gcp_k3s_servers"
+                ]["vars"]
+                variables["shell_inventory_k3s_api_address"] = address
+                variables["shell_inventory_k3s_api_endpoint"] = (
+                    f"https://{address}:6443"
+                )
+                variables["shell_inventory_k3s_api_host"] = address
+                self._write_private(path, json.dumps(inventory))
+                with self.assertRaisesRegex(
+                    launcher.RuntimeLauncherError, "unreserved"
+                ):
+                    launcher.load_inventory(path, "gcp", self.root)
+
     def test_accepts_the_proxmox_inventory_contract(self) -> None:
         self._write_inventory("proxmox")
 
@@ -352,6 +451,21 @@ class TestK3sRuntimeLauncher(unittest.TestCase):
             launcher.load_supply(
                 path,
                 self.root / "tar/manifests/init-k3s-runtime-supply.json",
+                self.root,
+            )
+
+    def test_rejects_a_changed_cilium_handoff_checksum(self) -> None:
+        path = self.root / ".local/ansible/k3s-network-supply.json"
+        handoff = json.loads(path.read_text(encoding="utf-8"))
+        handoff["shell_k3s_cilium_chart_sha256"] = "0" * 64
+        self._write_private(path, json.dumps(handoff))
+
+        with self.assertRaisesRegex(
+            launcher.RuntimeLauncherError, "Cilium chart checksum"
+        ):
+            launcher.load_network_supply(
+                path,
+                self.root / "tar/manifests/init-k3s-network-supply.json",
                 self.root,
             )
 
@@ -390,6 +504,15 @@ class TestK3sRuntimeLauncher(unittest.TestCase):
         with self.assertRaisesRegex(launcher.RuntimeLauncherError, "must not overlap"):
             launcher.load_runtime_vars(path, "gcp", self.root)
 
+    def test_rejects_runtime_cidrs_overlapping_declared_host_networks(self) -> None:
+        path = self.root / ".local/ansible/k3s-runtime/gcp.json"
+        runtime = json.loads(path.read_text(encoding="utf-8"))
+        runtime["shell_k3s_pod_cidr"] = "10.77.0.0/24"
+        self._write_private(path, json.dumps(runtime))
+
+        with self.assertRaisesRegex(launcher.RuntimeLauncherError, "host network"):
+            launcher.load_runtime_vars(path, "gcp", self.root)
+
     def test_rejects_permissive_runtime_input(self) -> None:
         path = self.root / ".local/ansible/k3s-runtime/gcp.json"
         path.chmod(0o640)
@@ -419,6 +542,16 @@ class TestK3sRuntimeLauncher(unittest.TestCase):
                 "shell_k3s_binary_sha256": "a" * 64,
                 "shell_k3s_api_vip_image_repository": "ghcr.io/kube-vip/kube-vip",
                 "shell_k3s_api_vip_image_digest": "sha256:" + "1" * 64,
+            },
+            {
+                "shell_k3s_helm_version": "v3.18.4",
+                "shell_k3s_helm_path": "/unused/helm",
+                "shell_k3s_helm_sha256": "b" * 64,
+                "shell_k3s_cilium_chart_path": "/unused/cilium.tgz",
+                "shell_k3s_cilium_chart_sha256": "c" * 64,
+                "shell_k3s_cilium_chart_version": "1.18.2",
+                "shell_k3s_cilium_images": {},
+                "shell_k3s_cilium_configuration": {},
             },
             runtime,
         )

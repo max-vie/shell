@@ -21,6 +21,13 @@
           - shell_k3s_api_endpoint is match('^https://[A-Za-z0-9.-]+:6443$')
           - shell_k3s_api_host is defined
           - shell_k3s_version is defined
+          - shell_k3s_helm_version is defined
+          - shell_k3s_helm_path is defined
+          - shell_k3s_helm_sha256 is match('^[0-9a-f]{64}$')
+          - shell_k3s_cilium_chart_version == '1.18.2'
+          - shell_k3s_cilium_chart_sha256 is match('^[0-9a-f]{64}$')
+          - shell_k3s_cilium_images is mapping
+          - shell_k3s_cilium_configuration is mapping
         fail_msg: The selected K3s verification contract is incomplete.
 
     - name: Require the Proxmox K3s API VIP contract
@@ -53,6 +60,7 @@
     - name: Inspect private K3s runtime files
       ansible.builtin.stat:
         path: "{{ item }}"
+        follow: false
       loop:
         - "{{ shell_k3s_binary_dest }}"
         - "{{ shell_k3s_config_dir }}/config.yaml"
@@ -60,6 +68,13 @@
         - "{{ shell_k3s_config_dir }}/k3s.yaml"
         - "{{ shell_k3s_data_dir }}/server/db/etcd/member"
       register: shell_k3s_runtime_files
+
+    - name: Inspect the installed Helm binary
+      ansible.builtin.stat:
+        path: "{{ shell_k3s_helm_dest }}"
+        checksum_algorithm: sha256
+        follow: false
+      register: shell_k3s_helm_file
 
     - name: Inspect the Kube-VIP manifest
       ansible.builtin.stat:
@@ -99,9 +114,25 @@
           - shell_k3s_runtime_files.results[3].stat.mode == '0600'
           - shell_k3s_runtime_files.results[4].stat.exists
           - shell_k3s_runtime_files.results[4].stat.isdir
+          - shell_k3s_helm_file.stat.exists
+          - shell_k3s_helm_file.stat.isreg
+          - shell_k3s_helm_file.stat.mode == '0755'
+          - shell_k3s_helm_file.stat.checksum == shell_k3s_helm_sha256
         fail_msg: >-
           {{ inventory_hostname }} does not meet the private K3s service,
           configuration, token, kubeconfig, or embedded-etcd contract.
+
+    - name: Verify the installed Helm client version
+      ansible.builtin.command:
+        argv: ["{{ shell_k3s_helm_dest }}", version, --short]
+      changed_when: false
+      register: shell_k3s_helm_version_check
+
+    - name: Require the installed Helm client version
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_helm_version in shell_k3s_helm_version_check.stdout
+        fail_msg: The installed Helm client does not match the private supply.
 
 - name: Verify the K3s cluster endpoint and node set
   hosts: "{{ shell_k3s_target_group }}"
@@ -158,6 +189,134 @@
             list | length == 3
         fail_msg: >-
           The live K3s node set or version does not match the private contract.
+      run_once: true
+
+    - name: Verify the Cilium agent DaemonSet
+      ansible.builtin.command:
+        argv:
+          - "{{ shell_k3s_binary_dest }}"
+          - kubectl
+          - -n
+          - kube-system
+          - rollout
+          - status
+          - daemonset/cilium
+          - --timeout=300s
+      changed_when: false
+      run_once: true
+
+    - name: Verify the Cilium Envoy DaemonSet
+      ansible.builtin.command:
+        argv:
+          - "{{ shell_k3s_binary_dest }}"
+          - kubectl
+          - -n
+          - kube-system
+          - rollout
+          - status
+          - daemonset/cilium-envoy
+          - --timeout=300s
+      changed_when: false
+      run_once: true
+
+    - name: Verify the Cilium operator deployment
+      ansible.builtin.command:
+        argv:
+          - "{{ shell_k3s_binary_dest }}"
+          - kubectl
+          - -n
+          - kube-system
+          - rollout
+          - status
+          - deployment/cilium-operator
+          - --timeout=300s
+      changed_when: false
+      run_once: true
+
+    - name: Read the Cilium configuration map
+      ansible.builtin.command:
+        argv:
+          - "{{ shell_k3s_binary_dest }}"
+          - kubectl
+          - --kubeconfig={{ shell_k3s_config_dir }}/k3s.yaml
+          - -n
+          - kube-system
+          - get
+          - configmap/cilium-config
+          - -o
+          - json
+      changed_when: false
+      register: shell_k3s_cilium_config
+      run_once: true
+
+    - name: Derive the Cilium configuration data
+      ansible.builtin.set_fact:
+        shell_k3s_cilium_config_data: >-
+          {{ (shell_k3s_cilium_config.stdout | from_json).data }}
+      run_once: true
+
+    - name: Read the deployed Cilium image references
+      ansible.builtin.command:
+        argv:
+          - "{{ shell_k3s_binary_dest }}"
+          - kubectl
+          - --kubeconfig={{ shell_k3s_config_dir }}/k3s.yaml
+          - -n
+          - kube-system
+          - get
+          - daemonset/cilium
+          - daemonset/cilium-envoy
+          - deployment/cilium-operator
+          - -o
+          - "jsonpath={range .items[*].spec.template.spec.initContainers[*]}{.image}{'\\n'}{end}{range .items[*].spec.template.spec.containers[*]}{.image}{'\\n'}{end}"  # yamllint disable-line rule:line-length
+      changed_when: false
+      register: shell_k3s_observed_cilium_images
+      run_once: true
+
+    - name: Read the kube-proxy DaemonSet absence
+      ansible.builtin.command:
+        argv:
+          - "{{ shell_k3s_binary_dest }}"
+          - kubectl
+          - --kubeconfig={{ shell_k3s_config_dir }}/k3s.yaml
+          - -n
+          - kube-system
+          - get
+          - daemonset/kube-proxy
+      changed_when: false
+      failed_when: false
+      register: shell_k3s_kube_proxy
+      run_once: true
+
+    - name: Require the Cilium kube-proxy replacement configuration
+      ansible.builtin.assert:
+        that:
+          - shell_k3s_cilium_config_data['kube-proxy-replacement'] == 'true'
+          - shell_k3s_cilium_config_data['cni-exclusive'] == 'true'
+          - shell_k3s_cilium_config_data['bpf-lb-sock'] == 'true'
+          - shell_k3s_cilium_config_data['bpf-lb-sock-hostns-only'] == 'true'
+          - >-
+            shell_k3s_cilium_config_data['tunnel-protocol'] ==
+            shell_k3s_cilium_configuration.tunnel_protocol
+          - >-
+            shell_k3s_cilium_config_data['cluster-pool-ipv4-cidr'] ==
+            shell_k3s_pod_cidr
+          - shell_k3s_kube_proxy.rc != 0
+          - >-
+            (shell_k3s_observed_cilium_images.stdout_lines | unique | sort) ==
+            [
+              shell_k3s_cilium_images.agent.repository ~ ':' ~
+              shell_k3s_cilium_images.agent.tag ~ '@' ~
+              shell_k3s_cilium_images.agent.digest,
+              shell_k3s_cilium_images.envoy.repository ~ ':' ~
+              shell_k3s_cilium_images.envoy.tag ~ '@' ~
+              shell_k3s_cilium_images.envoy.digest,
+              shell_k3s_cilium_images.operator.repository ~ ':' ~
+              shell_k3s_cilium_images.operator.tag ~ '@' ~
+              shell_k3s_cilium_images.operator.digest
+            ] | sort
+        fail_msg: >-
+          The live Cilium configuration does not match the private contract.
       run_once: true
 
     - name: Verify the Kube-VIP control-plane DaemonSet

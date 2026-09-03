@@ -18,6 +18,12 @@ handoffs:
 - `shell_k3s_version`: the pinned K3s version reported by the binary.
 - `shell_k3s_binary_path` and `shell_k3s_binary_sha256`: the private TAR
   artifact and its lowercase SHA-256 digest.
+- `shell_k3s_helm_version`, `shell_k3s_helm_path`, and
+  `shell_k3s_helm_sha256`: the private TAR Helm client used on the guests.
+- `shell_k3s_cilium_chart_path`, `shell_k3s_cilium_chart_version`, and
+  `shell_k3s_cilium_chart_sha256`: the private TAR Cilium chart handoff.
+- `shell_k3s_cilium_images` and `shell_k3s_cilium_configuration`: the locked
+  Cilium image digests and network settings.
 - `shell_k3s_pod_cidr` and `shell_k3s_service_cidr`: distinct cluster ranges.
 - Proxmox uses API VIP `10.66.0.200`, a private INIT guest-interface input,
   and a private TAR Kube-VIP image digest.
@@ -40,8 +46,8 @@ playbook. It does not accept arbitrary target groups, `--limit`, or
 `--start-at-task` values.
 
 Before Ansible starts, the launcher checks the generated inventory, the
-TAR-to-INIT K3s handoff, the staged binary checksum, and the private cluster
-runtime variables. The runtime variable files are
+TAR-to-INIT K3s and Cilium handoffs, the staged artifact checksums, and the
+private cluster runtime variables. The runtime variable files are
 `.local/ansible/k3s-runtime/gcp.json` and
 `.local/ansible/k3s-runtime/proxmox.json`. GCP requires the pod and service
 CIDRs. Proxmox also requires the Kube-VIP interface. These files contain no
@@ -77,14 +83,20 @@ The first node is always `*-k3s-01`, which preserves the embedded-etcd seed
 role.
 
 The configuration playbook assumes the Debian guest baseline has already been
-applied. It installs the checksum-verified K3s binary, writes a mode-0600
-token and config, initializes embedded etcd on the first server, waits for
-`etcd` and `etcd-readiness` on `/readyz?verbose` before the next server
-starts, and joins later servers through the stable endpoint. For the Proxmox
-group it also waits for the `kube-vip-ds` DaemonSet to become ready on the
-first server so the `10.66.0.200` VIP is announced before joiners probe it.
-K3s uses its default Flannel VXLAN backend for this foundation and disables
-bundled ServiceLB and Traefik so later ownership stays explicit.
+applied. It installs the checksum-verified K3s and Helm binaries, writes a
+mode-0600 token and config, initializes embedded etcd on the first server,
+waits for `etcd` and `etcd-readiness` on `/readyz?verbose` before the next
+server starts, and joins later servers through the stable endpoint. For the
+Proxmox group it also waits for the `kube-vip-ds` DaemonSet to become ready on
+the first server so the `10.66.0.200` VIP is announced before joiners probe it.
+K3s renders `flannel-backend: none`, disables its network-policy controller and
+kube-proxy, and leaves bundled ServiceLB and Traefik disabled.
+
+After all three servers join, INIT installs the pinned Cilium chart on the
+first server with the cluster API host, cluster pod CIDR, VXLAN, exclusive CNI
+ownership, kube-proxy replacement, and locked image digests. The temporary
+chart and values files are removed after Helm finishes. Cilium readiness is a
+required foundation gate; the run has no fallback to Flannel.
 
 For the Proxmox group, INIT renders a host-networked Kube-VIP DaemonSet before
 K3s starts. It uses ARP leader election for the control-plane VIP and leaves
@@ -92,16 +104,20 @@ service load balancing disabled.
 
 The playbook stops before mutation in Ansible check mode. On failure, its
 rescue path restores `fstab` and swap where possible, stops and disables K3s,
-and removes a unit or Kube-VIP manifest created by that run. Review the guest
-before another run.
+and removes a unit or Kube-VIP manifest created by that run. Helm uses atomic
+release changes and the Cilium temporary inputs are removed in all outcomes.
+Review the guest before another run. Switching an existing Flannel cluster to
+this foundation is outside the bounded path and requires a reviewed fresh
+cluster rebuild.
 
 ## Verification boundary
 
 The verification playbook is read-only. It checks the service, private runtime
 file modes, embedded-etcd member directory, exact Ready node set, declared
-K3s version, Kube-VIP readiness when enabled, and stable API readiness. CNI
-replacement, storage, identity, delivery, and application workloads remain
-separate lifecycle decisions.
+K3s and Helm versions, Cilium agent and Envoy DaemonSets, Cilium operator,
+locked kube-proxy replacement settings, Kube-VIP readiness when enabled, and
+stable API readiness. Storage, identity, delivery, and application workloads
+remain separate lifecycle decisions.
 
 Kubeconfig output is written only under ignored `.local/ansible/kubeconfig/`
 state. Live execution, guest startup, OpenTofu changes, and cluster proof

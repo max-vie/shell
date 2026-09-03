@@ -20,18 +20,18 @@ class TestK3sRuntimeContract(unittest.TestCase):
         configure = CONFIGURE.read_text(encoding="utf-8")
         verify = VERIFY.read_text(encoding="utf-8")
 
-        for source in (configure, verify):
+        for source, play_count in ((configure, 3), (verify, 2)):
             self.assertNotIn("default('gcp_k3s_servers')", source)
             self.assertNotIn("shell_k3s_token_path", source)
             self.assertEqual(
                 source.count('hosts: "{{ shell_k3s_target_group }}"'),
-                2,
+                play_count,
             )
             self.assertEqual(
                 source.count("import_tasks: tasks/require-k3s-target.yml"),
-                2,
+                play_count,
             )
-            self.assertEqual(source.count("tags: [always]"), 2)
+            self.assertEqual(source.count("tags: [always]"), play_count)
 
     def test_target_gate_binds_exact_clusters_nodes_and_metadata(self) -> None:
         source = TARGET_TASKS.read_text(encoding="utf-8")
@@ -94,6 +94,55 @@ class TestK3sRuntimeContract(unittest.TestCase):
             token,
         )
 
+    def test_configuration_selects_cilium_after_all_servers_join(self) -> None:
+        configure = CONFIGURE.read_text(encoding="utf-8")
+        values = (PLAYBOOK_ROOT / "templates/cilium-values.yml.j2").read_text(
+            encoding="utf-8"
+        )
+        vars_source = (
+            (PLAYBOOK_ROOT / "../vars/k3s.yml").resolve().read_text(encoding="utf-8")
+        )
+
+        self.assertIn("shell_k3s_flannel_backend: none", vars_source)
+        self.assertIn("shell_k3s_disable_network_policy: true", vars_source)
+        self.assertIn("shell_k3s_disable_kube_proxy: true", vars_source)
+        for required in (
+            "kubeProxyReplacement",
+            "tunnelProtocol:",
+            "clusterPoolIPv4PodCIDRList",
+            "cni:",
+            "exclusive:",
+            "socketLB:",
+            "operator:",
+            "envoy:",
+            "genericDigest:",
+        ):
+            self.assertIn(required, values)
+        join = configure.index("Wait for the local K3s API")
+        cilium = configure.index("Install and converge Cilium")
+        self.assertGreater(cilium, join)
+        for required in (
+            "--atomic",
+            "--reset-values",
+            "daemonset/cilium",
+            "daemonset/cilium-envoy",
+            "deployment/cilium-operator",
+            "Remove the private Cilium chart",
+        ):
+            self.assertIn(required, configure)
+
+    def test_verification_checks_cilium_state(self) -> None:
+        source = VERIFY.read_text(encoding="utf-8")
+        for required in (
+            "shell_k3s_helm_sha256",
+            "daemonset/cilium",
+            "daemonset/cilium-envoy",
+            "deployment/cilium-operator",
+            "configmap/cilium-config",
+            "cluster-pool-ipv4-cidr",
+        ):
+            self.assertIn(required, source)
+
     def test_token_path_is_derived_from_the_sudo_contract(self) -> None:
         contract = json.loads(TOKEN_CONTRACT.read_text(encoding="utf-8"))
         for cluster in ("gcp", "proxmox"):
@@ -109,9 +158,9 @@ class TestK3sRuntimeContract(unittest.TestCase):
     def test_verification_compares_the_pinned_version_exactly(self) -> None:
         source = VERIFY.read_text(encoding="utf-8")
         supply = json.loads(
-            (
-                SOURCE_ROOT / "tar/manifests/init-k3s-runtime-supply.json"
-            ).read_text(encoding="utf-8")
+            (SOURCE_ROOT / "tar/manifests/init-k3s-runtime-supply.json").read_text(
+                encoding="utf-8"
+            )
         )
         self.assertEqual(supply["k3s_binary"]["version"], "v1.34.10+k3s1")
         self.assertIn("select('equalto', shell_k3s_version)", source)
