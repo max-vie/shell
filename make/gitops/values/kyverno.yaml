@@ -1,0 +1,167 @@
+---
+# MAKE-owned Kyverno values. The chart and each enabled controller image are
+# pinned by TAR; the Harbor pull secret is supplied separately.
+# yamllint disable rule:line-length
+global:
+  imagePullSecrets:
+    - name: shell-registry-pull
+  caCertificates:
+    data: |
+      -----BEGIN CERTIFICATE-----
+      MIIByDCCAW6gAwIBAgIUbRMFOhqRRGabEQE2CkhTLzkqqGMwCgYIKoZIzj0EAwIw
+      MDEOMAwGA1UECgwFU0hFTEwxHjAcBgNVBAMMFVNIRUxMIE9mZmxpbmUgUm9vdCBD
+      QTAeFw0yNjA4MjAwNzQ1MzdaFw0zNjA4MTcwNzQ1MzdaMDAxDjAMBgNVBAoMBVNI
+      RUxMMR4wHAYDVQQDDBVTSEVMTCBPZmZsaW5lIFJvb3QgQ0EwWTATBgcqhkjOPQIB
+      BggqhkjOPQMBBwNCAAQnynxwrmPKXu3qQyNqqm2Zha/0xZtQIgGpyoCji9F1c7ng
+      h/udearmg7X8irt9/x2Jr14cAOGgIrwiUluG7sDEo2YwZDAfBgNVHSMEGDAWgBRj
+      fzSSqrWDRzrjgJbucYS/nMRFezASBgNVHRMBAf8ECDAGAQH/AgEBMA4GA1UdDwEB
+      /wQEAwIBBjAdBgNVHQ4EFgQUY380kqq1g0c644CW7nGEv5zERXswCgYIKoZIzj0E
+      AwIDSAAwRQIhALSRkeg3L1h7Lal7L6jckg47GqlBB6jlUFUPqvrSQ4oeAiBJkPpw
+      nn71mMbj1vcsjUUf0vQS8LhHoSNHXFqd4Gqt+g==
+      -----END CERTIFICATE-----
+
+crds:
+  install: true
+  migration:
+    enabled: false
+
+openreports:
+  enabled: false
+  installCrds: false
+
+reportsServer:
+  enabled: false
+
+existingImagePullSecrets:
+  - shell-registry-pull
+
+admissionController:
+  replicas: 2
+  imagePullSecrets:
+    - name: shell-registry-pull
+  initContainer:
+    image:
+      registry: reg.kyverno.io
+      repository: kyverno/kyvernopre
+      tag: v1.18.2@sha256:cd8cb4a31d25b3992734fb8f24a90ef691c90ce49338c89bea96792160eacb98
+      pullPolicy: IfNotPresent
+    resources:
+      requests: {cpu: 10m, memory: 64Mi}
+      limits: {cpu: 100m, memory: 256Mi}
+    securityContext:
+      runAsUser: 65534
+      runAsGroup: 65534
+      runAsNonRoot: true
+      privileged: false
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities: {drop: [ALL]}
+      seccompProfile: {type: RuntimeDefault}
+  container:
+    image:
+      registry: reg.kyverno.io
+      repository: kyverno/kyverno
+      tag: v1.18.2@sha256:0a540e2ddf74d0d2d3d45f9ef248d7dbc96576accdbcc6a2dd7eaff9fea56504
+      pullPolicy: IfNotPresent
+    resources:
+      requests: {cpu: 100m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 384Mi}
+    securityContext:
+      runAsUser: 65534
+      runAsGroup: 65534
+      runAsNonRoot: true
+      privileged: false
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: [ALL]
+      seccompProfile: {type: RuntimeDefault}
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile: {type: RuntimeDefault}
+  networkPolicy:
+    enabled: false
+  serviceMonitor:
+    enabled: false
+
+backgroundController:
+  replicas: 1
+  imagePullSecrets:
+    - name: shell-registry-pull
+  image:
+    registry: reg.kyverno.io
+    repository: kyverno/background-controller
+    tag: v1.18.2@sha256:d62566ce41bd0d4a32bf2cf44b9ebfc02c36374f821f83070890287f62f68671
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 300m, memory: 256Mi}
+  securityContext:
+    runAsUser: 65534
+    runAsGroup: 65534
+    runAsNonRoot: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: {drop: [ALL]}
+    seccompProfile: {type: RuntimeDefault}
+  serviceMonitor: {enabled: false}
+
+cleanupController:
+  replicas: 1
+  imagePullSecrets:
+    - name: shell-registry-pull
+  image:
+    registry: reg.kyverno.io
+    repository: kyverno/cleanup-controller
+    tag: v1.18.2@sha256:b0395d29ae332276e6910eb40418be9bc127c068d659f90aa1bcddd6be99ccb4
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+  securityContext:
+    runAsUser: 65534
+    runAsGroup: 65534
+    runAsNonRoot: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: {drop: [ALL]}
+    seccompProfile: {type: RuntimeDefault}
+  serviceMonitor: {enabled: false}
+
+reportsController:
+  replicas: 1
+  imagePullSecrets:
+    - name: shell-registry-pull
+  image:
+    registry: reg.kyverno.io
+    repository: kyverno/reports-controller
+    tag: v1.18.2@sha256:f09cf305170014e191b94e1c54f5be73163d8824eefad49349675c4efe43159a
+    pullPolicy: IfNotPresent
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 300m, memory: 256Mi}
+  securityContext:
+    runAsUser: 65534
+    runAsGroup: 65534
+    runAsNonRoot: true
+    privileged: false
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: {drop: [ALL]}
+    seccompProfile: {type: RuntimeDefault}
+  serviceMonitor: {enabled: false}
+
+test:
+  image:
+    registry: ghcr.io
+    repository: kyverno/readiness-checker
+    tag: v1.18.2@sha256:4fb1870b1a4adfed0fa7a32b7c3bcaf736fb889c7e1947ee8b20710bc2f5a5ce
+    pullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: shell-registry-pull
+
+webhooksCleanup:
+  enabled: false
+# yamllint enable rule:line-length

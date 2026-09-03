@@ -1,0 +1,31 @@
+---
+# yamllint disable rule:line-length
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kyverno-cosign-key-reader
+  namespace: shell-trust
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [cosign-public-keys]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kyverno-cosign-key-reader
+  namespace: shell-trust
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+subjects:
+  - kind: ServiceAccount
+    name: kyverno-admission-controller
+    namespace: kyverno
+roleRef:
+  kind: Role
+  name: kyverno-cosign-key-reader
+  apiGroup: rbac.authorization.k8s.io
+# yamllint enable rule:line-length

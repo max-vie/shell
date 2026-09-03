@@ -1,0 +1,48 @@
+---
+# yamllint disable rule:line-length
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: shell-require-signed-images
+  labels:
+    app.kubernetes.io/part-of: shell-platform
+  annotations:
+    policies.kyverno.io/title: Require signed SHELL images
+    policies.kyverno.io/category: Software Supply Chain Security
+    shell.platform/policy-owner: sudo
+spec:
+  admission: true
+  background: true
+  failurePolicy: Fail
+  validationFailureAction: Enforce
+  webhookTimeoutSeconds: 10
+  rules:
+    - name: require-cosign-signature
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaceSelector:
+                matchLabels:
+                  shell.platform/policy: enforced
+      exclude:
+        any:
+          - resources:
+              namespaces: [argocd, cert-manager, kube-system, kyverno, shell-trust]
+      verifyImages:
+        - imageReferences: ["registry.shell.internal/shell/*"]
+          required: true
+          mutateDigest: false
+          verifyDigest: true
+          imageRegistryCredentials:
+            secrets: [shell-registry-pull]
+          attestors:
+            - count: 1
+              entries:
+                - keys:
+                    publicKeys: k8s://shell-trust/cosign-public-keys
+                    rekor:
+                      ignoreTlog: true
+                    ctlog:
+                      ignoreSCT: true
+# yamllint enable rule:line-length
