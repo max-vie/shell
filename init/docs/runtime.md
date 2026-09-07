@@ -3,6 +3,21 @@
 INIT uses private routes, credentials, and local state for provider access and
 guest configuration. This page groups those operating rules by concern.
 
+## OpenTofu source validation
+
+`make -C init check` includes formatting and provider-schema validation for
+all five OpenTofu roots. Each root is initialized in an isolated temporary
+copy with its checked-in lockfile, backend access disabled, and lockfile
+updates refused. A cold provider cache may download only the packages pinned
+in that lockfile from the public registry.
+
+The check does not load a backend, read or write state, inspect private
+variable files or `.local/` inputs, use credentials, or contact the GCP or
+Proxmox provider APIs. A passing result proves that the checked-in source is
+formatted and that OpenTofu can load the locked provider schemas and validate
+the configuration. Provider access, plans, drift, infrastructure changes, and
+runtime behavior require separate approved evidence.
+
 ## Access
 
 ### Routes

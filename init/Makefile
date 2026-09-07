@@ -2,6 +2,10 @@
 # Targets never select arbitrary Ansible hosts or playbooks.
 PYTHON ?= python3
 ANSIBLE_PLAYBOOK ?= ansible-playbook
+TOFU ?= tofu
+GIT ?= git
+INIT_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+REPOSITORY_ROOT := $(abspath $(INIT_ROOT)/..)
 LAUNCHER := scripts/run_k3s_runtime.py
 CLUSTER ?= gcp
 PLATFORM_LAUNCHER := scripts/run_platform_addons.py
@@ -13,12 +17,16 @@ IDENTITY_CONFIGURE_PLAYBOOK := ansible/playbooks/configure-identity-service.yml
 IDENTITY_VERIFY_PLAYBOOK := ansible/playbooks/verify-identity-service.yml
 KEYCLOAK_BIND_PLAYBOOK := ansible/playbooks/configure-keycloak-ldap-bind.yml
 GCS_BACKUP_ROOT := opentofu/gcs-backup
+OPENTOFU_ROOTS := opentofu/gcp/shared opentofu/gcp/k3s opentofu/gcp/proxmox-host opentofu/proxmox/k3s $(GCS_BACKUP_ROOT)
+OPENTOFU_CACHE ?= $(REPOSITORY_ROOT)/.local/opentofu/validation/plugin-cache
+PLATFORM_SUPPLY := tar/manifests/platform-addons-supply.json
 override ANSIBLE_COLLECTIONS_PATH := $(shell $(PYTHON) -c 'import site; print(site.getusersitepackages() + "/ansible_collections")')
 
-.PHONY: check test k3s-syntax k3s-preview k3s-verify identity-syntax identity-preview identity-apply identity-verify identity-bind-preview identity-bind-apply gcs-backup-check platform-check platform-preview platform-apply platform-verify registry-trust-preview registry-trust-apply registry-trust-verify
+.PHONY: check test k3s-syntax k3s-preview k3s-verify identity-syntax identity-preview identity-apply identity-verify identity-bind-preview identity-bind-apply opentofu-check gcs-backup-check platform-check platform-preview platform-apply platform-verify registry-trust-preview registry-trust-apply registry-trust-verify
 
-# Keep the default check offline and independent of provider or guest state.
-check: test k3s-syntax identity-syntax gcs-backup-check platform-check
+# A cold OpenTofu cache may download lockfile-pinned providers. The default
+# check remains independent of provider APIs, backends, state, and guests.
+check: test k3s-syntax identity-syntax opentofu-check platform-check
 
 test:
 	$(PYTHON) -m unittest discover -s tests -p 'test_*.py'
@@ -55,8 +63,45 @@ identity-bind-preview:
 identity-bind-apply:
 	$(PYTHON) $(IDENTITY_LAUNCHER) bind --approval "$(APPROVAL)"
 
+opentofu-check:
+	@set -eu; \
+	umask 077; \
+	workspace="$$(mktemp -d)"; \
+	trap 'rm -rf -- "$$workspace"' EXIT; \
+	trap 'exit 129' HUP; \
+	trap 'exit 130' INT; \
+	trap 'exit 143' TERM; \
+	cd "$(INIT_ROOT)"; \
+	"$(GIT)" ls-files -- 'opentofu/**/*.tf' > "$$workspace/opentofu-files"; \
+	test -s "$$workspace/opentofu-files"; \
+	while IFS= read -r file; do \
+		mkdir -p "$$workspace/init/$$(dirname "$$file")"; \
+		cp "$$file" "$$workspace/init/$$file"; \
+	done < "$$workspace/opentofu-files"; \
+	for root in $(OPENTOFU_ROOTS); do \
+		test -f "$$root/.terraform.lock.hcl"; \
+		mkdir -p "$$workspace/init/$$root"; \
+		cp "$$root/.terraform.lock.hcl" "$$workspace/init/$$root/.terraform.lock.hcl"; \
+	done; \
+	mkdir -p "$$workspace/$$(dirname "$(PLATFORM_SUPPLY)")"; \
+	cp "$(REPOSITORY_ROOT)/$(PLATFORM_SUPPLY)" "$$workspace/$(PLATFORM_SUPPLY)"; \
+	mkdir -p "$(OPENTOFU_CACHE)" "$$workspace/home" "$$workspace/data"; \
+	env -i PATH="$$PATH" HOME="$$workspace/home" TF_IN_AUTOMATION=1 \
+		"$(TOFU)" -chdir="$$workspace/init/opentofu" fmt -check -diff -recursive -no-color; \
+	for root in $(OPENTOFU_ROOTS); do \
+		data_dir="$$workspace/data/$$root"; \
+		mkdir -p "$$data_dir"; \
+		env -i PATH="$$PATH" HOME="$$workspace/home" TF_IN_AUTOMATION=1 \
+			TF_PLUGIN_CACHE_DIR="$(OPENTOFU_CACHE)" TF_DATA_DIR="$$data_dir" \
+			"$(TOFU)" -chdir="$$workspace/init/$$root" init \
+			-backend=false -input=false -lockfile=readonly -no-color; \
+		env -i PATH="$$PATH" HOME="$$workspace/home" TF_IN_AUTOMATION=1 \
+			TF_PLUGIN_CACHE_DIR="$(OPENTOFU_CACHE)" TF_DATA_DIR="$$data_dir" \
+			"$(TOFU)" -chdir="$$workspace/init/$$root" validate -no-color; \
+	done
+
 gcs-backup-check:
-	tofu fmt -check -diff "$(GCS_BACKUP_ROOT)"
+	$(TOFU) fmt -check -diff "$(GCS_BACKUP_ROOT)"
 
 platform-check:
 	$(PYTHON) -m unittest $(CURDIR)/tests/test_platform_addons.py
