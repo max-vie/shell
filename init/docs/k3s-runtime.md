@@ -125,5 +125,5 @@ require separate approval.
 
 Direct playbook selectors can bypass in-play gates. Treat zero-host runs,
 `--start-at-task`, skipped preflight tasks, and direct playbook commands as
-unsupported evidence. Live K3s execution remains unauthorized until a fixed
-controller launcher closes that boundary.
+unsupported evidence. The controller launcher now closes the target-selection
+boundary; live K3s execution still requires separate approval.

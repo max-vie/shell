@@ -1,6 +1,11 @@
 # SHELL
 
+[![Source checks](https://github.com/max-vie/shell/actions/workflows/source-checks.yml/badge.svg)](https://github.com/max-vie/shell/actions/workflows/source-checks.yml)
+
 A Linux and Kubernetes infrastructure engineering portfolio.
+
+SHELL organizes platform work into six lifecycle areas: trust, artifact
+supply, infrastructure, workload delivery, operations, and documentation.
 
 ## Lifecycle
 
@@ -14,44 +19,36 @@ flowchart LR
     MAKE -->|service state and alerts| WATCH["WATCH<br/>monitoring and recovery"]
     WATCH -->|operational evidence| MAN["MAN<br/>decisions and runbooks"]
     MAN -. ownership and decisions .-> SUDO
+    MAN -. ownership and decisions .-> TAR
     MAN -. ownership and decisions .-> INIT
     MAN -. ownership and decisions .-> MAKE
     MAN -. ownership and decisions .-> WATCH
 ```
 
-| Area | Responsibility |
+| Area | Focus |
 | --- | --- |
-| `sudo/` | Identity, access, secret-handling, signing, and trust contracts |
-| `tar/` | Verified images, packages, charts, manifests, and artifact handoffs |
-| `init/` | GCP and Proxmox hosts, guests, networks, storage, and K3s foundations |
-| `make/` | Kubernetes workloads, delivery services, platform services, and applications |
-| `watch/` | Monitoring policy, read-only verification, recovery, and evidence |
-| `man/` | Architecture decisions, operating procedures, and cross-boundary records |
+| [`sudo/`](sudo/README.md) | Identity, access, signing, and trust contracts |
+| [`tar/`](tar/README.md) | Artifact locks, validation, staging, and transfer |
+| [`init/`](init/README.md) | GCP, Proxmox, OpenTofu, Ansible, and K3s foundations |
+| [`make/`](make/README.md) | Delivery services and Kubernetes workloads |
+| [`watch/`](watch/README.md) | Monitoring, read-only checks, and recovery evidence |
+| [`man/`](man/README.md) | Architecture decisions and operating records |
 
-## Build story
+## Boundaries
 
-The repository is arranged around the work required to bring up and operate
-the platform:
+The repository contains source contracts, tests, validators, guarded
+controllers, manifests, and documentation. The source checks describe those
+files and their safety gates. Provider state, running guests, clusters,
+services, artifact publication, and recovery require separate evidence.
 
-1. Establish identity and trust with SUDO.
-2. Produce pinned and verified K3s and platform artifacts with TAR.
-3. Provision the GCP and Proxmox foundation with INIT.
-4. Provision and configure the independent GCP and Proxmox K3s clusters with
-   INIT.
-5. Deliver Forgejo, platform services, and the release-feed application with
-   MAKE.
-6. Observe services and run recovery checks with WATCH.
-7. Record decisions and operating boundaries in MAN throughout the lifecycle.
+## Documentation
 
-## Start here
+- [Platform architecture](man/docs/architecture/platform-nodes.md)
+- [Architecture and runbook index](man/README.md)
+- [INIT runtime guidance](init/docs/runtime.md)
+- [K3s runtime contract](init/docs/k3s-runtime.md)
 
-- [Platform architecture](man/docs/architecture/platform-nodes.md): hosts,
-  clusters, networks, and service endpoints.
-- [Architecture decisions](man/docs/adr/): the decisions behind the platform.
-- [INIT runtime guidance](init/docs/runtime.md): access, secrets, and state.
-- [K3s runtime contract](init/docs/k3s-runtime.md): cluster inputs and
-  verification boundaries.
-- [Release-feed bootstrap](man/docs/runbooks/release-feed-bootstrap.md):
-  workload ownership, deployment order, and rollback.
-- [WATCH Grafana recovery](man/docs/runbooks/watch-grafana-recovery.md):
-  monitoring and recovery policy.
+## Contributing and license
+
+Read [Contributing](CONTRIBUTING.md) before proposing a change. SHELL is
+available under the [MIT License](LICENSE).
