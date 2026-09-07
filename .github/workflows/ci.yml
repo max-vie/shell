@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  source-checks:
+    name: Source checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.6"
+
+      - name: Create isolated Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/shell-ci-venv"
+          echo "$RUNNER_TEMP/shell-ci-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install Python and Ansible dependencies
+        shell: bash
+        env:
+          PYTHONUSERBASE: ${{ runner.temp }}/python-user
+        run: |
+          set -euo pipefail
+          python --version
+          python -m pip install \
+            --disable-pip-version-check \
+            --no-warn-script-location \
+            "ansible-core==2.21.1" \
+            "PyYAML==6.0.3"
+          collections_root="$(python -c 'import site; print(site.getusersitepackages())')"
+          ansible-galaxy collection install \
+            --collections-path "$collections_root" \
+            --requirements-file init/ansible/requirements.yml
+          python -m pip check
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: "1.11.5"
+          tofu_wrapper: false
+          checksums: |
+            901121681e751574d739de5208cad059eddf9bd739b575745cf9e3c961b28a13
+
+      - name: Verify tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(python --version)" = 'Python 3.14.6'
+          tofu version | grep -F 'OpenTofu v1.11.5'
+
+      - name: Create private working directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 .local
+          test "$(stat -c '%a' .local)" = '700'
+          test -z "$(find .local -mindepth 1 -print -quit)"
+
+      - name: Run repository checks
+        shell: bash
+        env:
+          OPENTOFU_CACHE: ${{ runner.temp }}/opentofu-plugin-cache
+          PYTHONUSERBASE: ${{ runner.temp }}/python-user
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "$OPENTOFU_CACHE"
+          make check OPENTOFU_CACHE="$OPENTOFU_CACHE"
+
+      - name: Confirm private working directory stayed empty
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(stat -c '%a' .local)" = '700'
+          test -z "$(find .local -mindepth 1 -print -quit)"
