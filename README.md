@@ -1,6 +1,6 @@
 # SHELL
 
-[![Source checks](https://github.com/max-vie/shell/actions/workflows/source-checks.yml/badge.svg)](https://github.com/max-vie/shell/actions/workflows/source-checks.yml)
+[![Source checks](https://github.com/max-vie/shell/actions/workflows/ci.yml/badge.svg)](https://github.com/max-vie/shell/actions/workflows/ci.yml)
 
 A Linux and Kubernetes infrastructure engineering portfolio.
 
