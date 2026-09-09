@@ -18,13 +18,32 @@ MAKE = "make"
 
 
 class OpenTofuGuardTests(unittest.TestCase):
+    def cleanup_private_plan_base(self, private_base: Path) -> None:
+        shutil.rmtree(private_base, ignore_errors=True)
+        for parent in (
+            private_base.parent,
+            private_base.parent.parent,
+            private_base.parent.parent.parent,
+        ):
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+
     def private_plan_base(self, base: Path) -> Path:
         private_base = (
             ROOT / ".local/opentofu/gcp/test-guards" / base.parent.name.replace(" ", "-")
         )
-        private_base.mkdir(parents=True, exist_ok=True)
-        private_base.chmod(0o700)
-        self.addCleanup(shutil.rmtree, private_base, ignore_errors=True)
+        for directory in (
+            ROOT / ".local",
+            ROOT / ".local/opentofu",
+            ROOT / ".local/opentofu/gcp",
+            private_base.parent,
+            private_base,
+        ):
+            directory.mkdir(mode=0o700, exist_ok=True)
+            directory.chmod(0o700)
+        self.addCleanup(self.cleanup_private_plan_base, private_base)
         return private_base
 
     def fake_tofu(self, directory: Path) -> tuple[Path, Path]:
