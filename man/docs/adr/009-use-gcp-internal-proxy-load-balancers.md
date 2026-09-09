@@ -11,7 +11,7 @@ foundation.
 
 ## Context
 
-The direct GCP K3s cluster uses the shared `10.77.0.0/24` VPC subnet. Harbor
+The direct GCP K3s cluster uses the `gcp/network`-owned `10.77.0.0/24` VPC subnet. Harbor
 and release-feed need stable internal HTTPS addresses, but direct BGP peering
 from MetalLB speakers to Cloud Router is not a supported direct-GCP boundary.
 The donor shellprod checkout used a different topology and its MetalLB
@@ -24,7 +24,7 @@ create the required GCP forwarding resources by itself.
 ## Decision
 
 Use one regional GCP internal proxy Network Load Balancer per service. INIT
-owns the GCP resources in the `gcp/shared` and `gcp/k3s` OpenTofu roots:
+owns the GCP resources in the `gcp/network` and `gcp/k3s` OpenTofu roots:
 
 - Keep `10.77.0.0/24` for the shared VPC and use `10.77.2.0/23` for the
   regional managed proxy subnet.
