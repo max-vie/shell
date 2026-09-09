@@ -18,6 +18,7 @@ CONTRACT_FILES = {
     "identity": "identity-model.json",
     "keycloak": "keycloak-profile.json",
     "kubernetes": "kubernetes-ecosystem-profile.json",
+    "operator": "operator-access-profile.json",
 }
 CONTRACT_VERSIONS = {
     "delivery-host-profile": "2.0.0",
@@ -31,6 +32,7 @@ CONTRACT_VERSIONS = {
     "keycloak-profile": "1.0.0",
     "kubernetes-ecosystem-profile": "1.0.0",
     "kubernetes-ecosystem-input-contract": "1.0.0",
+    "operator-access-profile": "1.0.0",
 }
 COMMON_FIELDS = {
     "schema_version",
@@ -190,6 +192,88 @@ def validate_identity(document: dict[str, Any]) -> None:
             "status": "source-defined",
         },
         "identity implementation boundary changed",
+    )
+
+
+def validate_operator(document: dict[str, Any]) -> None:
+    label = "operator access profile"
+    require_common(
+        document,
+        label=label,
+        contract_id="operator-access-profile",
+        consumers=["init"],
+        fields={"access_boundary", "value_policy"},
+    )
+    require(
+        document["access_boundary"]
+        == {
+            "human_bootstrap": {
+                "principal_type": "human",
+                "authentication": "user-authenticated",
+                "can_impersonate": "shell-local-deployer",
+                "max_token_lifetime_seconds": 3600,
+                "binding_scope": "service-account-only",
+                "grant": {
+                    "role": "roles/iam.serviceAccountTokenCreator",
+                    "target": "shell-local-deployer",
+                },
+            },
+            "deployment_service_account": {
+                "principal_type": "service-account",
+                "logical_name": "shell-local-deployer",
+                "service_account_keys": "prohibited",
+                "role_classes": [
+                    {
+                        "name": "network-operator",
+                        "scope": "project",
+                        "permissions": [
+                            "compute.firewalls.create",
+                            "compute.firewalls.delete",
+                            "compute.firewalls.get",
+                            "compute.firewalls.update",
+                            "compute.globalOperations.get",
+                            "compute.networks.create",
+                            "compute.networks.delete",
+                            "compute.networks.get",
+                            "compute.networks.update",
+                            "compute.projects.get",
+                            "compute.regionOperations.get",
+                            "compute.regions.get",
+                            "compute.routers.create",
+                            "compute.routers.delete",
+                            "compute.routers.get",
+                            "compute.routers.update",
+                            "compute.subnetworks.create",
+                            "compute.subnetworks.delete",
+                            "compute.subnetworks.get",
+                            "compute.subnetworks.setPrivateIpGoogleAccess",
+                            "compute.subnetworks.update",
+                        ],
+                    }
+                    ,
+                    {
+                        "name": "iap-tunnel-operator",
+                        "scope": "declared-vm",
+                        "permissions": ["iap.tunnelInstances.accessViaIAP"],
+                    },
+                ],
+                "forbidden_roles": [
+                    "roles/owner",
+                    "roles/editor",
+                    "roles/viewer",
+                ],
+            },
+        },
+        "operator access boundary changed",
+    )
+    require(
+        document["value_policy"]
+        == {
+            "project_identifiers": "omitted",
+            "billing_identifiers": "omitted",
+            "secret_values": "omitted",
+        },
+        "operator value policy changed",
     )
 
 
@@ -1344,6 +1428,7 @@ def validate_contracts(
         for name, filename in CONTRACT_FILES.items()
     }
     validate_identity(documents["identity"])
+    validate_operator(documents["operator"])
     validate_freeipa(documents["freeipa"], repository_root)
     validate_freeipa_input_contract(repository_root)
     validate_keycloak(documents["keycloak"], repository_root)

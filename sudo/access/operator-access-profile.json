@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "operator-access-profile",
+  "description": "Source-only SUDO boundary for human bootstrap and keyless deployment-service-account impersonation.",
+  "policy_owner": "sudo",
+  "consumer_owners": ["init"],
+  "proof_status": "source-only",
+  "access_boundary": {
+    "human_bootstrap": {
+      "principal_type": "human",
+      "authentication": "user-authenticated",
+      "can_impersonate": "shell-local-deployer",
+      "max_token_lifetime_seconds": 3600,
+      "binding_scope": "service-account-only",
+      "grant": {
+        "role": "roles/iam.serviceAccountTokenCreator",
+        "target": "shell-local-deployer"
+      }
+    },
+    "deployment_service_account": {
+      "principal_type": "service-account",
+      "logical_name": "shell-local-deployer",
+      "service_account_keys": "prohibited",
+      "role_classes": [
+        {
+          "name": "network-operator",
+          "scope": "project",
+          "permissions": [
+            "compute.firewalls.create",
+            "compute.firewalls.delete",
+            "compute.firewalls.get",
+            "compute.firewalls.update",
+            "compute.globalOperations.get",
+            "compute.networks.create",
+            "compute.networks.delete",
+            "compute.networks.get",
+            "compute.networks.update",
+            "compute.projects.get",
+            "compute.regionOperations.get",
+            "compute.regions.get",
+            "compute.routers.create",
+            "compute.routers.delete",
+            "compute.routers.get",
+            "compute.routers.update",
+            "compute.subnetworks.create",
+            "compute.subnetworks.delete",
+            "compute.subnetworks.get",
+            "compute.subnetworks.setPrivateIpGoogleAccess",
+            "compute.subnetworks.update"
+          ]
+        },
+        {
+          "name": "iap-tunnel-operator",
+          "scope": "declared-vm",
+          "permissions": [
+            "iap.tunnelInstances.accessViaIAP"
+          ]
+        }
+      ],
+      "forbidden_roles": ["roles/owner", "roles/editor", "roles/viewer"]
+    }
+  },
+  "value_policy": {
+    "project_identifiers": "omitted",
+    "billing_identifiers": "omitted",
+    "secret_values": "omitted"
+  }
+}

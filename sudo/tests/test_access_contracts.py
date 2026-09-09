@@ -79,6 +79,129 @@ class TestAccessContracts(unittest.TestCase):
         documents = validator.validate_contracts(self.root)
         self.assertEqual(set(documents), set(validator.CONTRACT_FILES))
 
+    def test_operator_profile_defines_keyless_impersonation_boundary(self) -> None:
+        validator.validate_contracts(self.root)
+        operator = self.documents["operator"]
+        boundary = operator["access_boundary"]
+        self.assertEqual(
+            "roles/iam.serviceAccountTokenCreator",
+            boundary["human_bootstrap"]["grant"]["role"],  # type: ignore[index]
+        )
+        self.assertEqual(
+            "shell-local-deployer",
+            boundary["human_bootstrap"]["grant"]["target"],  # type: ignore[index]
+        )
+        self.assertEqual(
+            3600,
+            boundary["human_bootstrap"]["max_token_lifetime_seconds"],  # type: ignore[index]
+        )
+        self.assertEqual(
+            "service-account-only",
+            boundary["human_bootstrap"]["binding_scope"],  # type: ignore[index]
+        )
+        self.assertEqual(
+            "prohibited",
+            boundary["deployment_service_account"]["service_account_keys"],  # type: ignore[index]
+        )
+        self.assertEqual(
+            [
+                {
+                    "name": "network-operator",
+                    "scope": "project",
+                    "permissions": [
+                        "compute.firewalls.create",
+                        "compute.firewalls.delete",
+                        "compute.firewalls.get",
+                        "compute.firewalls.update",
+                        "compute.globalOperations.get",
+                        "compute.networks.create",
+                        "compute.networks.delete",
+                        "compute.networks.get",
+                        "compute.networks.update",
+                        "compute.projects.get",
+                        "compute.regionOperations.get",
+                        "compute.regions.get",
+                        "compute.routers.create",
+                        "compute.routers.delete",
+                        "compute.routers.get",
+                        "compute.routers.update",
+                        "compute.subnetworks.create",
+                        "compute.subnetworks.delete",
+                        "compute.subnetworks.get",
+                        "compute.subnetworks.setPrivateIpGoogleAccess",
+                        "compute.subnetworks.update",
+                    ],
+                },
+                {
+                    "name": "iap-tunnel-operator",
+                    "scope": "declared-vm",
+                    "permissions": ["iap.tunnelInstances.accessViaIAP"],
+                },
+            ],
+            boundary["deployment_service_account"]["role_classes"],  # type: ignore[index]
+        )
+        self.assertEqual(
+            ["roles/owner", "roles/editor", "roles/viewer"],
+            boundary["deployment_service_account"]["forbidden_roles"],  # type: ignore[index]
+        )
+        self.assertEqual(
+            {
+                "project_identifiers": "omitted",
+                "billing_identifiers": "omitted",
+                "secret_values": "omitted",
+            },
+            operator["value_policy"],
+        )
+
+    def test_rejects_operator_escalation_and_value_fields(self) -> None:
+        operator = self.altered("operator")
+        operator["access_boundary"]["deployment_service_account"][  # type: ignore[index]
+            "service_account_keys"
+        ] = "allowed"
+        self.write("operator", operator)
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "operator access boundary"
+        ):
+            validator.validate_contracts(self.root)
+
+        operator = self.altered("operator")
+        operator["access_boundary"]["human_bootstrap"]["grant"][  # type: ignore[index]
+            "role"
+        ] = "roles/editor"
+        self.write("operator", operator)
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "operator access boundary"
+        ):
+            validator.validate_contracts(self.root)
+
+        operator = self.altered("operator")
+        operator["access_boundary"]["deployment_service_account"][  # type: ignore[index]
+            "role_classes"
+        ][0]["scope"] = "organization"  # type: ignore[index]
+        self.write("operator", operator)
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "operator access boundary"
+        ):
+            validator.validate_contracts(self.root)
+
+        for field in ("project_id", "billing_account", "secret_value"):
+            with self.subTest(field=field):
+                operator = self.altered("operator")
+                operator[field] = "value-must-not-be-tracked"
+                self.write("operator", operator)
+                with self.assertRaisesRegex(
+                    validator.AccessContractError, "shape changed"
+                ):
+                    validator.validate_contracts(self.root)
+
+        operator = self.altered("operator")
+        operator["value_policy"]["billing_identifiers"] = "included"  # type: ignore[index]
+        self.write("operator", operator)
+        with self.assertRaisesRegex(
+            validator.AccessContractError, "operator value policy"
+        ):
+            validator.validate_contracts(self.root)
+
     def test_kubernetes_input_contract_validates_separate_private_handoffs(self) -> None:
         validator.validate_kubernetes_input_contract(self.root)
         path = self.root / "sudo/secrets/kubernetes-ecosystem-input-contract.json"
@@ -451,7 +574,7 @@ class TestAccessContracts(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(
             stdout.getvalue(),
-            "validated 5 SUDO access profiles and 9 handoff contracts\n",
+            "validated 6 SUDO access profiles and 9 handoff contracts\n",
         )
 
 
