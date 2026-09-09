@@ -24,7 +24,7 @@ output "subnet_cidr" {
 }
 
 output "proxy_only_subnetwork_self_link" {
-  description = "Regional proxy-only subnet used by GCP internal proxy load balancers."
+  description = "Regional proxy-only subnet used by GCP internal load-balancers."
   value       = google_compute_subnetwork.proxy_only.self_link
 }
 
@@ -41,17 +41,4 @@ output "region" {
 output "project_id" {
   description = "The authoritative GCP project for the shared platform."
   value       = var.project_id
-}
-
-output "shared_nodes" {
-  description = "Shared platform node names and private addresses."
-  value = {
-    for name, node in module.shared_nodes : name => {
-      name             = node.name
-      zone             = node.zone
-      internal_ip      = node.internal_ip
-      operating_system = var.shared_nodes[name].operating_system
-      project_id       = var.project_id
-    }
-  }
 }

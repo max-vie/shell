@@ -1,10 +1,10 @@
 data "terraform_remote_state" "shared" {
-  # The shared root owns the VPC and subnet. Consume its outputs instead of
+  # The network root owns the VPC and subnet. Consume its outputs instead of
   # repeating network names between independently managed roots.
   backend = "local"
 
   config = {
-    path = "../../../../.local/opentofu/gcp/shared/terraform.tfstate"
+    path = "../../../../.local/opentofu/gcp/network/terraform.tfstate"
   }
 }
 

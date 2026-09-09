@@ -16,7 +16,7 @@ terraform {
 }
 
 provider "google" {
-  # Use ADC locally or Workload Identity Federation externally; keep
-  # credential files outside the checkout and out of HCL, state, and plans.
+  # Slice 2 source validation remains credential-free. Slice 3 will supply
+  # short-lived shell-local-deployer impersonation outside HCL and state.
   project = var.project_id
 }

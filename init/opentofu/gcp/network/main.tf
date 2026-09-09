@@ -6,12 +6,6 @@ locals {
   service_routing = local.platform_supply.service_routing
 }
 
-resource "google_project_service" "compute" {
-  project            = var.project_id
-  service            = "compute.googleapis.com"
-  disable_on_destroy = false
-}
-
 resource "google_compute_network" "shared" {
   project                 = var.project_id
   name                    = var.network_name
@@ -20,8 +14,6 @@ resource "google_compute_network" "shared" {
   # GCP defaults to 1460; pin it so the nested bridge and guest NICs use the
   # same frame size instead of depending on an implicit provider default.
   mtu = 1460
-
-  depends_on = [google_project_service.compute]
 }
 
 resource "google_compute_subnetwork" "shared" {
@@ -49,8 +41,6 @@ resource "google_compute_subnetwork" "proxy_only" {
   ip_cidr_range = local.service_routing.proxy_only_subnet.cidr
   purpose       = "REGIONAL_MANAGED_PROXY"
   role          = "ACTIVE"
-
-  depends_on = [google_project_service.compute]
 }
 
 resource "google_compute_router" "shared" {
@@ -144,28 +134,4 @@ resource "google_compute_firewall" "delivery_internal" {
     protocol = "tcp"
     ports    = ["443"]
   }
-}
-
-module "shared_nodes" {
-  for_each = var.shared_nodes
-  source   = "../../modules/gcp-private-node"
-
-  project_id        = var.project_id
-  region            = var.region
-  subnetwork_id     = google_compute_subnetwork.shared.id
-  node_name         = each.key
-  zone              = each.value.zone
-  internal_address  = each.value.address
-  machine_type      = each.value.machine_type
-  source_image      = each.value.source_image
-  boot_disk_size_gb = each.value.boot_disk_size_gb
-  data_disk_size_gb = each.value.data_disk_size_gb
-  tags = concat(
-    ["shell-shared"],
-    each.key == "identity-01" ? ["shell-identity"] : ["shell-delivery"],
-  )
-  deletion_protection = var.deletion_protection
-  data_device_name    = "shell-${each.key}-data"
-
-  depends_on = [google_compute_router_nat.shared]
 }

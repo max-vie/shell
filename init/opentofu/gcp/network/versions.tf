@@ -4,7 +4,7 @@ terraform {
   # Remote state is generally recommended. This single-owner project uses a
   # local backend for ease of operation, with state kept under private .local.
   backend "local" {
-    path = "../../../../.local/opentofu/gcp/proxmox-host/terraform.tfstate"
+    path = "../../../../.local/opentofu/gcp/network/terraform.tfstate"
   }
 
   required_providers {

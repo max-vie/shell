@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 INIT_ROOT = ROOT / "init"
 MAKE = shutil.which("make") or "make"
 ROOTS = (
-    "opentofu/gcp/shared",
+    "opentofu/gcp/network",
+    "opentofu/gcp/shared-nodes",
     "opentofu/gcp/k3s",
     "opentofu/gcp/proxmox-host",
     "opentofu/proxmox/k3s",
@@ -66,16 +67,17 @@ if [ -n "$directory" ] && grep -R -q 'private-opentofu-sentinel' "$directory"; t
 fi
 case "$directory" in
   */init/opentofu)
-    test -f "$directory/gcp/shared/main.tf" || exit 18
-    test -f "$directory/modules/gcp-private-node/main.tf" || exit 19
+    test -f "$directory/gcp/network/main.tf" || exit 18
+    test -f "$directory/gcp/shared-nodes/main.tf" || exit 19
+    test -f "$directory/modules/gcp-private-node/main.tf" || exit 20
     ;;
-  */init/opentofu/gcp/shared|*/init/opentofu/gcp/k3s)
-    test -f "$directory/../../../../tar/manifests/platform-addons-supply.json" || exit 20
+  */init/opentofu/gcp/network|*/init/opentofu/gcp/shared-nodes|*/init/opentofu/gcp/k3s)
+    test -f "$directory/../../../../tar/manifests/platform-addons-supply.json" || exit 21
     ;;
 esac
 case "$directory" in
   */init/opentofu/*)
-    test -f "$directory/.terraform.lock.hcl" || exit 21
+    test -f "$directory/.terraform.lock.hcl" || exit 22
     ;;
 esac
 {failure}
@@ -134,7 +136,7 @@ esac
             sentinel.unlink(missing_ok=True)
 
         calls = [line for line in output.splitlines() if line.startswith("ARGS")]
-        self.assertEqual(len(calls), 11)
+        self.assertEqual(len(calls), 13)
         self.assertIn(
             "/opentofu> <fmt> <-check> <-diff> <-recursive> <-no-color>", calls[0]
         )
@@ -165,14 +167,17 @@ esac
     def test_stops_after_the_first_failed_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory_name:
             directory = Path(directory_name)
-            executable, log = self.fake_tofu(directory, fail_root="opentofu/gcp/k3s")
+            executable, log = self.fake_tofu(
+                directory, fail_root="opentofu/gcp/shared-nodes"
+            )
             result = self.run_target(executable, directory / "cache")
             self.assertNotEqual(result.returncode, 0)
             output = log.read_text(encoding="utf-8")
 
-        self.assertIn("/opentofu/gcp/shared> <validate>", output)
-        self.assertIn("/opentofu/gcp/k3s> <init>", output)
-        self.assertNotIn("/opentofu/gcp/k3s> <validate>", output)
+        self.assertIn("/opentofu/gcp/network> <validate>", output)
+        self.assertIn("/opentofu/gcp/shared-nodes> <init>", output)
+        self.assertNotIn("/opentofu/gcp/shared-nodes> <validate>", output)
+        self.assertNotIn("/opentofu/gcp/k3s>", output)
         self.assertNotIn("/opentofu/gcp/proxmox-host>", output)
         home = next(
             Path(line.removeprefix("HOME="))

@@ -9,14 +9,15 @@ from pathlib import Path
 
 
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
-SHARED_ROOT = SOURCE_ROOT / "init/opentofu/gcp/shared"
+NETWORK_ROOT = SOURCE_ROOT / "init/opentofu/gcp/network"
+SHARED_NODES_ROOT = SOURCE_ROOT / "init/opentofu/gcp/shared-nodes"
 GCP_K3S_ROOT = SOURCE_ROOT / "init/opentofu/gcp/k3s"
 PROXMOX_K3S_ROOT = SOURCE_ROOT / "init/opentofu/proxmox/k3s"
 
 
-def resource_block(source: str, name: str, next_marker: str) -> str:
+def resource_block(source: str, name: str, next_marker: str | None) -> str:
     start = source.index(f'resource "google_compute_firewall" "{name}"')
-    end = source.index(next_marker, start)
+    end = source.index(next_marker, start) if next_marker else len(source)
     return source[start:end]
 
 
@@ -29,11 +30,11 @@ def port_lists(source: str) -> list[list[int]]:
 
 class TestSharedNodeContract(unittest.TestCase):
     def test_shared_nodes_select_separate_operating_systems(self) -> None:
-        variables = (SHARED_ROOT / "variables.tf").read_text(encoding="utf-8")
-        example = (SHARED_ROOT / "terraform.tfvars.example").read_text(
+        variables = (SHARED_NODES_ROOT / "variables.tf").read_text(encoding="utf-8")
+        example = (SHARED_NODES_ROOT / "terraform.tfvars.example").read_text(
             encoding="utf-8"
         )
-        outputs = (SHARED_ROOT / "outputs.tf").read_text(encoding="utf-8")
+        outputs = (SHARED_NODES_ROOT / "outputs.tf").read_text(encoding="utf-8")
 
         self.assertIn("operating_system  = string", variables)
         self.assertIn('== "almalinux-9"', variables)
@@ -64,7 +65,7 @@ class TestSharedNodeContract(unittest.TestCase):
         self.assertIn("image_sha256     = var.debian_image.sha256", proxmox_outputs)
 
     def test_role_firewalls_match_public_service_contracts(self) -> None:
-        source = (SHARED_ROOT / "main.tf").read_text(encoding="utf-8")
+        source = (NETWORK_ROOT / "main.tf").read_text(encoding="utf-8")
         identity_profile = json.loads(
             (SOURCE_ROOT / "sudo/access/freeipa-host-profile.json").read_text(
                 encoding="utf-8"
@@ -86,7 +87,7 @@ class TestSharedNodeContract(unittest.TestCase):
             "identity_internal",
             'resource "google_compute_firewall" "delivery_internal"',
         )
-        delivery = resource_block(source, "delivery_internal", 'module "shared_nodes"')
+        delivery = resource_block(source, "delivery_internal", None)
 
         self.assertIn('target_tags   = ["shell-identity"]', identity)
         self.assertEqual(
@@ -106,6 +107,46 @@ class TestSharedNodeContract(unittest.TestCase):
             "google_compute_firewall.delivery_internal",
             shared,
         )
+
+    def test_network_and_shared_nodes_have_separate_ownership(self) -> None:
+        network = (NETWORK_ROOT / "main.tf").read_text(encoding="utf-8")
+        shared_nodes = (SHARED_NODES_ROOT / "main.tf").read_text(encoding="utf-8")
+
+        self.assertNotIn('resource "google_project_service"', network)
+        self.assertNotIn('resource "google_project_service"', shared_nodes)
+        self.assertIn(
+            'path = "../../../../.local/opentofu/gcp/network/terraform.tfstate"',
+            shared_nodes,
+        )
+        self.assertIn(
+            'path = "../../../../.local/opentofu/gcp/network/terraform.tfstate"',
+            (GCP_K3S_ROOT / "main.tf").read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            'path = "../../../../.local/opentofu/gcp/network/terraform.tfstate"',
+            (SOURCE_ROOT / "init/opentofu/gcp/proxmox-host/main.tf").read_text(
+                encoding="utf-8"
+            ),
+        )
+
+    def test_network_outputs_and_inventory_output_keep_their_names(self) -> None:
+        network_outputs = (NETWORK_ROOT / "outputs.tf").read_text(encoding="utf-8")
+        shared_outputs = (SHARED_NODES_ROOT / "outputs.tf").read_text(encoding="utf-8")
+
+        for name in (
+            "network_name",
+            "network_self_link",
+            "subnetwork_name",
+            "subnetwork_self_link",
+            "subnet_cidr",
+            "proxy_only_subnetwork_self_link",
+            "proxy_only_subnet_cidr",
+            "region",
+            "project_id",
+        ):
+            self.assertIn(f'output "{name}"', network_outputs)
+        self.assertIn('output "shared_nodes"', shared_outputs)
+        self.assertNotIn('output "shared_nodes"', network_outputs)
 
 
 if __name__ == "__main__":
