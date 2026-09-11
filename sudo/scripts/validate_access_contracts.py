@@ -236,6 +236,7 @@ def validate_operator(document: dict[str, Any]) -> None:
                             "compute.networks.delete",
                             "compute.networks.get",
                             "compute.networks.update",
+                            "compute.networks.updatePolicy",
                             "compute.projects.get",
                             "compute.regionOperations.get",
                             "compute.regions.get",

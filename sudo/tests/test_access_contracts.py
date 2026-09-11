@@ -118,6 +118,7 @@ class TestAccessContracts(unittest.TestCase):
                         "compute.networks.delete",
                         "compute.networks.get",
                         "compute.networks.update",
+                        "compute.networks.updatePolicy",
                         "compute.projects.get",
                         "compute.regionOperations.get",
                         "compute.regions.get",
