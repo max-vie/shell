@@ -130,7 +130,10 @@ fi
         state_gate = private_base / "state-gate"
         api_gate = private_base / "api-gate"
         state_gate.write_text("fresh\n", encoding="utf-8")
-        api_gate.write_text("compute.googleapis.com=enabled\n", encoding="utf-8")
+        api_gate.write_text(
+            "bootstrap=approved\n" if root == "bootstrap" else "compute.googleapis.com=enabled\n",
+            encoding="utf-8",
+        )
         state_gate.chmod(0o600)
         api_gate.chmod(0o600)
         if digest:
@@ -238,6 +241,61 @@ fi
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("root is not allow-listed", result.stderr)
+            self.assertFalse(log.exists())
+
+    def test_bootstrap_root_plans_applies_and_verifies(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tofu guards ") as name:
+            directory = Path(name)
+            fake, log = self.fake_tofu(directory)
+            base = directory / "plans"
+
+            planned = self.run_target("tofu-plan", base, fake, root="bootstrap")
+            self.assertEqual(planned.returncode, 0, planned.stderr)
+
+            commit = subprocess.check_output(  # nosec B603
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip()
+            plan = self.private_plan_base(base) / "bootstrap" / f"shell-platform-{commit}.tfplan"
+            digest = plan.with_name(f"{plan.name}.sha256").read_text(
+                encoding="utf-8"
+            ).strip()
+            self.assertEqual(len(digest), 64)
+
+            applied = self.run_target(
+                "tofu-apply", base, fake, root="bootstrap", digest=digest
+            )
+            verified = self.run_target(
+                "tofu-verify", base, fake, root="bootstrap", digest=digest
+            )
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+            self.assertEqual(verified.returncode, 0, verified.stderr)
+            self.assertEqual(
+                log.read_text(encoding="utf-8").splitlines(),
+                ["plan", "apply", "output", "plan"],
+            )
+
+    def test_bootstrap_root_refuses_the_compute_api_gate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tofu guards ") as name:
+            directory = Path(name)
+            fake, log = self.fake_tofu(directory)
+            base = directory / "plans"
+            arguments = [MAKE, "-C", str(INIT_ROOT), "tofu-plan"]
+            arguments.extend(
+                self.common_arguments(base, fake, root="bootstrap")
+            )
+            api_gate = self.private_plan_base(base) / "api-gate"
+            api_gate.write_text("compute.googleapis.com=enabled\n", encoding="utf-8")
+            api_gate.chmod(0o600)
+            result = subprocess.run(  # nosec B603
+                arguments,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=os.environ.copy(),
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("API gate is not approved", result.stderr)
             self.assertFalse(log.exists())
 
     def test_refuses_project_environment_mismatch(self) -> None:

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 INIT_ROOT = ROOT / "init"
 MAKE = shutil.which("make") or "make"
 ROOTS = (
+    "opentofu/gcp/bootstrap",
     "opentofu/gcp/network",
     "opentofu/gcp/shared-nodes",
     "opentofu/gcp/k3s",
@@ -67,12 +68,13 @@ if [ -n "$directory" ] && grep -R -q 'private-opentofu-sentinel' "$directory"; t
 fi
 case "$directory" in
   */init/opentofu)
-    test -f "$directory/gcp/network/main.tf" || exit 18
-    test -f "$directory/gcp/shared-nodes/main.tf" || exit 19
-    test -f "$directory/modules/gcp-private-node/main.tf" || exit 20
+    test -f "$directory/gcp/bootstrap/main.tf" || exit 18
+    test -f "$directory/gcp/network/main.tf" || exit 19
+    test -f "$directory/gcp/shared-nodes/main.tf" || exit 20
     ;;
-  */init/opentofu/gcp/network|*/init/opentofu/gcp/shared-nodes|*/init/opentofu/gcp/k3s)
-    test -f "$directory/../../../../tar/manifests/platform-addons-supply.json" || exit 21
+  */init/opentofu/gcp/bootstrap|*/init/opentofu/gcp/network|*/init/opentofu/gcp/shared-nodes|*/init/opentofu/gcp/k3s)
+    test -f "$directory/../../../../sudo/access/operator-access-profile.json" || exit 21
+    test -f "$directory/../../../../tar/manifests/platform-addons-supply.json" || exit 22
     ;;
 esac
 case "$directory" in
@@ -136,7 +138,7 @@ esac
             sentinel.unlink(missing_ok=True)
 
         calls = [line for line in output.splitlines() if line.startswith("ARGS")]
-        self.assertEqual(len(calls), 13)
+        self.assertEqual(len(calls), 15)
         self.assertIn(
             "/opentofu> <fmt> <-check> <-diff> <-recursive> <-no-color>", calls[0]
         )

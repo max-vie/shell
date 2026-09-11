@@ -1,0 +1,4 @@
+project_id          = "replace-with-gcp-project-id"
+billing_account     = "replace-with-billing-account-id"
+operator_email      = "replace-with-operator-email"
+budget_amount_units = 50

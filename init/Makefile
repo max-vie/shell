@@ -8,6 +8,7 @@ INIT_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 REPOSITORY_ROOT := $(abspath $(INIT_ROOT)/..)
 LAUNCHER := scripts/run_k3s_runtime.py
 CLUSTER ?= gcp
+BOOTSTRAP_LAUNCHER := scripts/run_gcp_bootstrap.py
 PLATFORM_LAUNCHER := scripts/run_platform_addons.py
 SYNTAX_INVENTORY := ansible/inventory/hosts.example.yml
 K3S_CONFIGURE_PLAYBOOK := ansible/playbooks/configure-k3s-runtime.yml
@@ -17,7 +18,7 @@ IDENTITY_CONFIGURE_PLAYBOOK := ansible/playbooks/configure-identity-service.yml
 IDENTITY_VERIFY_PLAYBOOK := ansible/playbooks/verify-identity-service.yml
 KEYCLOAK_BIND_PLAYBOOK := ansible/playbooks/configure-keycloak-ldap-bind.yml
 GCS_BACKUP_ROOT := opentofu/gcs-backup
-OPENTOFU_ROOTS := opentofu/gcp/network opentofu/gcp/shared-nodes opentofu/gcp/k3s opentofu/gcp/proxmox-host opentofu/proxmox/k3s $(GCS_BACKUP_ROOT)
+OPENTOFU_ROOTS := opentofu/gcp/bootstrap opentofu/gcp/network opentofu/gcp/shared-nodes opentofu/gcp/k3s opentofu/gcp/proxmox-host opentofu/proxmox/k3s $(GCS_BACKUP_ROOT)
 OPENTOFU_CACHE ?= $(REPOSITORY_ROOT)/.local/opentofu/validation/plugin-cache
 TOFU_PLAN_BASE ?= $(REPOSITORY_ROOT)/.local/opentofu/gcp
 TOFU_PROJECT ?=
@@ -36,7 +37,7 @@ export GIT TOFU TOFU_PLAN_BASE TOFU_PROJECT TOFU_ROOT TOFU_COMMIT TOFU_APPROVAL 
 PLATFORM_SUPPLY := tar/manifests/platform-addons-supply.json
 override ANSIBLE_COLLECTIONS_PATH := $(shell $(PYTHON) -c 'import site; print(site.getusersitepackages() + "/ansible_collections")')
 
-.PHONY: check test k3s-syntax k3s-preview k3s-verify identity-syntax identity-preview identity-apply identity-verify identity-bind-preview identity-bind-apply opentofu-check tofu-guard tofu-plan tofu-apply tofu-verify gcs-backup-check platform-check platform-preview platform-apply platform-verify registry-trust-preview registry-trust-apply registry-trust-verify
+.PHONY: check test k3s-syntax k3s-preview k3s-verify identity-syntax identity-preview identity-apply identity-verify identity-bind-preview identity-bind-apply bootstrap-discover bootstrap-ledger bootstrap-verify opentofu-check tofu-guard tofu-plan tofu-apply tofu-verify gcs-backup-check platform-check platform-preview platform-apply platform-verify registry-trust-preview registry-trust-apply registry-trust-verify
 
 # A cold OpenTofu cache may download lockfile-pinned providers. The default
 # check remains independent of provider APIs, backends, state, and guests.
@@ -77,6 +78,17 @@ identity-bind-preview:
 identity-bind-apply:
 	$(PYTHON) $(IDENTITY_LAUNCHER) bind --approval "$(APPROVAL)"
 
+# Read-only bootstrap checks. The bootstrap root itself is planned and
+# applied through the guarded tofu targets with the bootstrap approval.
+bootstrap-discover:
+	$(PYTHON) $(BOOTSTRAP_LAUNCHER) discover
+
+bootstrap-ledger:
+	$(PYTHON) $(BOOTSTRAP_LAUNCHER) ledger
+
+bootstrap-verify:
+	$(PYTHON) $(BOOTSTRAP_LAUNCHER) verify
+
 opentofu-check:
 	@set -eu; \
 	umask 077; \
@@ -103,6 +115,8 @@ opentofu-check:
 	done; \
 	mkdir -p "$$workspace/$$(dirname "$(PLATFORM_SUPPLY)")"; \
 	cp "$(REPOSITORY_ROOT)/$(PLATFORM_SUPPLY)" "$$workspace/$(PLATFORM_SUPPLY)"; \
+	mkdir -p "$$workspace/sudo/access"; \
+	cp "$(REPOSITORY_ROOT)/sudo/access/operator-access-profile.json" "$$workspace/sudo/access/operator-access-profile.json"; \
 	mkdir -p "$(OPENTOFU_CACHE)" "$$workspace/home" "$$workspace/data"; \
 	env -i PATH="$$PATH" HOME="$$workspace/home" TF_IN_AUTOMATION=1 \
 		"$(TOFU)" -chdir="$$workspace/init/opentofu" fmt -check -diff -recursive -no-color; \
@@ -144,11 +158,17 @@ tofu-guard:
 		case "$$(cat "$$state_gate")" in fresh|migrated) ;; *) echo "tofu guard refused: state gate must be fresh or migrated" >&2; exit 2 ;; esac; \
 		legacy_state="$(REPOSITORY_ROOT)/.local/opentofu/gcp/shared/terraform.tfstate"; \
 		if [ -e "$$legacy_state" ] && [ "$$(cat "$$state_gate")" != migrated ]; then echo "tofu guard refused: legacy state requires migration approval" >&2; exit 2; fi; \
-		test "$$(cat "$$api_gate")" = "compute.googleapis.com=enabled" || { echo "tofu guard refused: Compute API gate is not approved" >&2; exit 2; }; \
+		case "$$root" in \
+			bootstrap) expected_api_gate='bootstrap=approved' ;; \
+			network) expected_api_gate='compute.googleapis.com=enabled' ;; \
+			*) echo "tofu guard refused: root is not allow-listed" >&2; exit 2 ;; \
+		esac; \
+		test "$$(cat "$$api_gate")" = "$$expected_api_gate" || { echo "tofu guard refused: API gate is not approved" >&2; exit 2; }; \
 		case "$$project" in \
 			''|*[!a-z0-9-]*) echo "tofu guard refused: invalid project" >&2; exit 2 ;; \
 		esac; \
 		case "$$root" in \
+			bootstrap) expected_approval='environment-gcp/init/tofu/bootstrap' ;; \
 			network) expected_approval='environment-gcp/init/tofu/network' ;; \
 			*) echo "tofu guard refused: root is not allow-listed" >&2; exit 2 ;; \
 		esac; \

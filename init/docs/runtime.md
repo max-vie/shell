@@ -6,7 +6,7 @@ guest configuration. This page groups those operating rules by concern.
 ## OpenTofu source validation
 
 `make -C init check` includes formatting and provider-schema validation for
-all six OpenTofu roots. Each root is initialized in an isolated temporary
+all seven OpenTofu roots. Each root is initialized in an isolated temporary
 copy with its checked-in lockfile, backend access disabled, and lockfile
 updates refused. A cold provider cache may download only the packages pinned
 in that lockfile from the public registry.
@@ -18,10 +18,19 @@ formatted and that OpenTofu can load the locked provider schemas and validate
 the configuration. Provider access, plans, drift, infrastructure changes, and
 runtime behavior require separate approved evidence.
 
-The foundation roots assume that Slice 3 has already created the exact project
-and enabled the reviewed Google APIs, including Compute Engine. The network and
-shared-node roots do not enable APIs themselves. Source validation does not
-prove that this precondition exists.
+The `bootstrap` root declares the project, billing link, budget, required
+APIs, deployment service account, custom role, and impersonation binding. It
+is planned and applied through the guarded tofu targets with the
+`environment-gcp/init/tofu/bootstrap` approval and its own API gate. The
+network and shared-node roots assume the bootstrap root has already created
+the exact project and enabled the reviewed Google APIs, including Compute
+Engine; they do not enable APIs themselves. Source validation does not prove
+that this precondition exists.
+
+The read-only bootstrap checks run through `init/scripts/run_gcp_bootstrap.py`:
+`discover` (Slice 1 discovery), `ledger` (Slice 0 private ledger), and
+`verify` (Slice 3 operator boundary). They require private inputs under
+`.local/gcp-bootstrap/` and never print billing or identity values.
 
 ## Access
 
@@ -29,7 +38,7 @@ prove that this precondition exists.
 
 | Consumer | Target | Route | Required private inputs |
 | --- | --- | --- | --- |
-| OpenTofu Google roots | Google Cloud resources | Google provider API | Slice 3 planned short-lived `shell-local-deployer` impersonation outside the checkout; external federation is deferred |
+| OpenTofu Google roots | Google Cloud resources | Google provider API | Short-lived `shell-local-deployer` impersonation outside the checkout; external federation is deferred |
 | OpenTofu Proxmox root | Nested Proxmox API | IAP TCP tunnel to the private GCP host | Proxmox endpoint, API token, IAP identity, and reviewed host trust |
 | OpenTofu Proxmox image upload | Proxmox node SSH | SSH through the private IAP tunnel | OS Login identity, SSH agent, and host-key policy |
 | Ansible GCP guests | Direct GCP guests | GCP IAP `ProxyCommand` and OS Login | Private inventory, project, zone, user, SSH agent, and `known_hosts` |
@@ -165,7 +174,7 @@ Kubernetes storage and load-balancer behavior.
 
 | Material | Owner | Used by | Private location or handoff |
 | --- | --- | --- | --- |
-| Google application credentials | SUDO and the execution environment | OpenTofu Google provider | Outside the checkout; current source accepts ADC, while Slice 3 plans short-lived `shell-local-deployer` impersonation and defers external federation |
+| Google application credentials | SUDO and the execution environment | OpenTofu Google provider | Outside the checkout; current source accepts ADC, while the bootstrap root plans short-lived `shell-local-deployer` impersonation and defers external federation |
 | Proxmox API token | SUDO | OpenTofu Proxmox provider | Private process environment or wrapper |
 | SSH agent and key material | SUDO and the execution environment | OpenTofu image upload and Ansible | SSH agent or private files outside Git |
 | K3s server token | SUDO | INIT K3s playbooks | Fixed per-cluster path derived by INIT |

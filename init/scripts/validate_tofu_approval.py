@@ -26,6 +26,7 @@ EXPECTED_FIELDS = {
     "approved_at",
 }
 ROOT_APPROVALS = {
+    "bootstrap": "environment-gcp/init/tofu/bootstrap",
     "network": "environment-gcp/init/tofu/network",
     "shared-nodes": "environment-gcp/init/tofu/shared-nodes",
 }
