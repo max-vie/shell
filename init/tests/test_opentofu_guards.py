@@ -243,6 +243,65 @@ fi
             self.assertIn("root is not allow-listed", result.stderr)
             self.assertFalse(log.exists())
 
+    def test_shared_nodes_root_plans_applies_and_verifies(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tofu guards ") as name:
+            directory = Path(name)
+            fake, log = self.fake_tofu(directory)
+            base = directory / "plans"
+
+            planned = self.run_target("tofu-plan", base, fake, root="shared-nodes")
+            self.assertEqual(planned.returncode, 0, planned.stderr)
+
+            commit = subprocess.check_output(  # nosec B603
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+            ).strip()
+            plan = (
+                self.private_plan_base(base)
+                / "shared-nodes"
+                / f"shell-platform-{commit}.tfplan"
+            )
+            digest = plan.with_name(f"{plan.name}.sha256").read_text(
+                encoding="utf-8"
+            ).strip()
+            self.assertEqual(len(digest), 64)
+
+            applied = self.run_target(
+                "tofu-apply", base, fake, root="shared-nodes", digest=digest
+            )
+            verified = self.run_target(
+                "tofu-verify", base, fake, root="shared-nodes", digest=digest
+            )
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+            self.assertEqual(verified.returncode, 0, verified.stderr)
+            self.assertEqual(
+                log.read_text(encoding="utf-8").splitlines(),
+                ["plan", "apply", "output", "plan"],
+            )
+
+    def test_shared_nodes_root_refuses_the_bootstrap_api_gate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tofu guards ") as name:
+            directory = Path(name)
+            fake, log = self.fake_tofu(directory)
+            base = directory / "plans"
+            arguments = [MAKE, "-C", str(INIT_ROOT), "tofu-plan"]
+            arguments.extend(
+                self.common_arguments(base, fake, root="shared-nodes")
+            )
+            api_gate = self.private_plan_base(base) / "api-gate"
+            api_gate.write_text("bootstrap=approved\n", encoding="utf-8")
+            api_gate.chmod(0o600)
+            result = subprocess.run(  # nosec B603
+                arguments,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=os.environ.copy(),
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("API gate is not approved", result.stderr)
+            self.assertFalse(log.exists())
+
     def test_bootstrap_root_plans_applies_and_verifies(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tofu guards ") as name:
             directory = Path(name)

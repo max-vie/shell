@@ -132,10 +132,10 @@ opentofu-check:
 			"$(TOFU)" -chdir="$$workspace/init/$$root" validate -no-color; \
 	done
 
-# These targets are deliberately limited to the current GCP network root.
-# Shared-node and later roots get their own reviewed source slice. Plans are
-# private, bound to the current commit, and never reused by
-# path or digest substitution.
+# These targets are deliberately limited to the reviewed GCP roots
+# (bootstrap, network, shared-nodes). Later roots get their own reviewed
+# source slice. Plans are private, bound to the current commit, and never
+# reused by path or digest substitution.
 tofu-guard:
 	@set -eu; \
 		project="$${TOFU_PROJECT}"; \
@@ -161,6 +161,7 @@ tofu-guard:
 		case "$$root" in \
 			bootstrap) expected_api_gate='bootstrap=approved' ;; \
 			network) expected_api_gate='compute.googleapis.com=enabled' ;; \
+			shared-nodes) expected_api_gate='compute.googleapis.com=enabled' ;; \
 			*) echo "tofu guard refused: root is not allow-listed" >&2; exit 2 ;; \
 		esac; \
 		test "$$(cat "$$api_gate")" = "$$expected_api_gate" || { echo "tofu guard refused: API gate is not approved" >&2; exit 2; }; \
@@ -170,6 +171,7 @@ tofu-guard:
 		case "$$root" in \
 			bootstrap) expected_approval='environment-gcp/init/tofu/bootstrap' ;; \
 			network) expected_approval='environment-gcp/init/tofu/network' ;; \
+			shared-nodes) expected_approval='environment-gcp/init/tofu/shared-nodes' ;; \
 			*) echo "tofu guard refused: root is not allow-listed" >&2; exit 2 ;; \
 		esac; \
 		test "$$approval" = "$$expected_approval" || { echo "tofu guard refused: approval does not match root" >&2; exit 2; }; \

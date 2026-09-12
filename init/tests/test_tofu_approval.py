@@ -64,6 +64,24 @@ class TofuApprovalTests(unittest.TestCase):
                 digest="b" * 64,
             )
 
+    def test_accepts_the_shared_nodes_root_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "approval.json"
+            self.record(
+                path,
+                root="shared-nodes",
+                approval="environment-gcp/init/tofu/shared-nodes",
+            )
+            record = validator.load_record(path)
+            validator.validate_record(
+                record,
+                project_id="shell-platform",
+                root="shared-nodes",
+                commit="a" * 40,
+                approval="environment-gcp/init/tofu/shared-nodes",
+                digest="b" * 64,
+            )
+
     def test_rejects_digest_or_root_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "approval.json"
