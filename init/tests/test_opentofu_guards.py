@@ -233,6 +233,24 @@ fi
                 ["plan", "apply", "output", "plan"],
             )
 
+    def test_refuses_permissive_state_files(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="tofu guards ") as name:
+            directory = Path(name)
+            fake, log = self.fake_tofu(directory)
+            base = directory / "plans"
+            private_base = self.private_plan_base(base)
+            state_dir = private_base / "network"
+            state_dir.mkdir(mode=0o700)
+            state = state_dir / "terraform.tfstate"
+            state.write_text("private state\n", encoding="utf-8")
+            state.chmod(0o644)
+
+            result = self.run_target("tofu-plan", base, fake)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("state file mode is not 0600", result.stderr)
+            self.assertFalse(log.exists())
+
     def test_refuses_an_unallowlisted_root(self) -> None:
         with tempfile.TemporaryDirectory(prefix="tofu guards ") as name:
             directory = Path(name)

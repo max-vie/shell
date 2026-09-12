@@ -16,8 +16,8 @@ terraform {
 }
 
 provider "google" {
-  # Slice 2 source validation remains credential-free. The live run supplies
-  # short-lived shell-local-deployer impersonation outside HCL and state.
+  # This root creates shell-local-deployer, so its initial apply uses the
+  # human bootstrap credential. Later GCP roots pin that account explicitly.
   project = var.project_id
   region  = var.region
 }

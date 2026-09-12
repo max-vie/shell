@@ -20,6 +20,7 @@ PRIVATE_FILE_MODE = 0o600
 PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 ZONE_PATTERN = re.compile(r"^[a-z][a-z0-9-]+[0-9]-[a-z]$")
 REGION = "europe-west4"
+DEPLOYMENT_SERVICE_ACCOUNT = "shell-local-deployer"
 REQUIRED_APIS = {
     "compute.googleapis.com",
     "iamcredentials.googleapis.com",
@@ -115,8 +116,13 @@ def _gcloud(
     *,
     run_process: Callable[..., Any],
     project: str,
+    impersonate_service_account: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = ["gcloud", *arguments, "--project", project, "--format", "json"]
+    if impersonate_service_account is not None:
+        command.extend(
+            ["--impersonate-service-account", impersonate_service_account]
+        )
     return cast(
         subprocess.CompletedProcess[str],
         run_process(command, capture_output=True, text=True, check=False),
@@ -242,7 +248,7 @@ def ledger(
     repository_root = repository_root.resolve(strict=True)
     private_root = repository_root / ".local/gcp-bootstrap"
     _require_private_directory(private_root, repository_root, "private bootstrap directory")
-    value = _ledger(private_root / "ledger.json", repository_root)
+    _ledger(private_root / "ledger.json", repository_root)
     print("ledger: schema 1.0, trial window, credit, threshold, and screenshot present")
     print("ledger: values withheld from output")
     return 0
@@ -257,6 +263,9 @@ def verify(
     private_root = repository_root / ".local/gcp-bootstrap"
     _require_private_directory(private_root, repository_root, "private bootstrap directory")
     project = _project_id(private_root / "project.json", repository_root)
+    deployment_service_account = (
+        f"{DEPLOYMENT_SERVICE_ACCOUNT}@{project}.iam.gserviceaccount.com"
+    )
 
     completed = _gcloud(["billing", "projects", "describe"], run_process=run_process, project=project)
     billing = _parse_json(completed, "billing description")
@@ -272,7 +281,10 @@ def verify(
     completed = _gcloud(["iam", "service-accounts", "list"], run_process=run_process, project=project)
     accounts = _parse_json(completed, "service account listing")
     require(
-        any(account.get("email", "").startswith("shell-local-deployer@") for account in accounts),
+        any(
+            account.get("email", "").startswith(f"{DEPLOYMENT_SERVICE_ACCOUNT}@")
+            for account in accounts
+        ),
         "deployment service account is missing",
     )
     print("service account: shell-local-deployer present")
@@ -285,9 +297,14 @@ def verify(
     )
     print("custom role: shell_local_deployer present")
 
-    completed = _gcloud(["compute", "regions", "describe", REGION], run_process=run_process, project=project)
+    completed = _gcloud(
+        ["compute", "regions", "describe", REGION],
+        run_process=run_process,
+        project=project,
+        impersonate_service_account=deployment_service_account,
+    )
     _require_success(completed, "impersonation verification")
-    print("impersonation: token issuance and read access verified")
+    print("impersonation: token issuance and scoped compute read verified")
     return 0
 
 

@@ -153,6 +153,10 @@ tofu-guard:
 		root_plan_dir="$$plan_base/$$root"; \
 		test ! -L "$$root_plan_dir" || { echo "tofu guard refused: root plan directory is a symlink" >&2; exit 2; }; \
 		if [ -e "$$root_plan_dir" ]; then test "$$(realpath -e -- "$$root_plan_dir")" = "$$root_plan_dir" || { echo "tofu guard refused: root plan directory is not canonical" >&2; exit 2; }; fi; \
+		for state_file in "$$root_plan_dir/terraform.tfstate" "$$root_plan_dir/terraform.tfstate.backup"; do \
+			test ! -L "$$state_file" || { echo "tofu guard refused: state file is a symlink" >&2; exit 2; }; \
+			if [ -e "$$state_file" ]; then test "$$(stat -c '%a' "$$state_file")" = 600 || { echo "tofu guard refused: state file mode is not 0600" >&2; exit 2; }; fi; \
+		done; \
 		state_gate="$${TOFU_STATE_GATE}"; api_gate="$${TOFU_API_GATE}"; \
 		for gate in "$$state_gate" "$$api_gate"; do test -f "$$gate" && test ! -L "$$gate" || { echo "tofu guard refused: precondition gate is missing" >&2; exit 2; }; resolved_gate="$$(realpath -e -- "$$gate")"; test "$$resolved_gate" = "$$gate" || { echo "tofu guard refused: precondition gate is not canonical" >&2; exit 2; }; case "$$resolved_gate" in "$$plan_base"/*) ;; *) echo "tofu guard refused: precondition gate is outside private plan state" >&2; exit 2 ;; esac; test "$$(stat -c '%a' "$$gate")" = 600 || { echo "tofu guard refused: precondition gate mode is not 0600" >&2; exit 2; }; done; \
 		case "$$(cat "$$state_gate")" in fresh|migrated) ;; *) echo "tofu guard refused: state gate must be fresh or migrated" >&2; exit 2 ;; esac; \
@@ -237,6 +241,7 @@ tofu-plan: tofu-guard
 
 tofu-apply: tofu-guard
 	@set -eu; \
+		umask 077; \
 		plan="$${TOFU_PLAN}"; \
 		digest_file="$$plan.sha256"; \
 		test -f "$$plan" && test ! -L "$$plan" || { echo "tofu guard refused: saved plan is missing" >&2; exit 2; }; \
@@ -264,6 +269,7 @@ tofu-apply: tofu-guard
 
 tofu-verify: tofu-guard
 	@set -eu; \
+		umask 077; \
 		plan="$${TOFU_PLAN}"; \
 		vars="$${TOFU_VARS}"; \
 		test -n "$$vars" || { echo "tofu guard refused: private variable file is required" >&2; exit 2; }; \

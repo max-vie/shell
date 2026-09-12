@@ -16,8 +16,8 @@ terraform {
 }
 
 provider "google" {
-  # Slice 2 source validation remains credential-free. Slice 3 will supply
-  # short-lived shell-local-deployer impersonation outside HCL and state.
-  project = var.project_id
-  region  = var.region
+  # Use the exact short-lived deployment account after bootstrap.
+  project                     = var.project_id
+  region                      = var.region
+  impersonate_service_account = "shell-local-deployer@${var.project_id}.iam.gserviceaccount.com"
 }

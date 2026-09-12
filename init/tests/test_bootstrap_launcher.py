@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import shutil
-import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +24,7 @@ class TestBootstrapLauncher(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "repository"
+        self.commands: list[list[str]] = []
         private = self.root / ".local/gcp-bootstrap"
         private.mkdir(parents=True, exist_ok=True)
         private.chmod(0o700)
@@ -57,7 +56,8 @@ class TestBootstrapLauncher(unittest.TestCase):
             path.write_text(value, encoding="utf-8")
         path.chmod(0o600)
 
-    def run_gcloud(self, *_: object, **__: object) -> SimpleNamespace:
+    def run_gcloud(self, command: list[str], **__: object) -> SimpleNamespace:
+        self.commands.append(command)
         return SimpleNamespace(returncode=0, stdout="[]", stderr="")
 
     def test_ledger_validates_the_private_record(self) -> None:
@@ -135,6 +135,7 @@ class TestBootstrapLauncher(unittest.TestCase):
 
     def test_verify_passes_with_a_complete_boundary(self) -> None:
         def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+            self.commands.append(command)
             if "billing" in command:
                 return SimpleNamespace(
                     returncode=0, stdout=json.dumps({"billingEnabled": True}), stderr=""
@@ -167,6 +168,11 @@ class TestBootstrapLauncher(unittest.TestCase):
 
         result = launcher.verify(repository_root=self.root, run_process=run)
         self.assertEqual(result, 0)
+        self.assertIn("--impersonate-service-account", self.commands[-1])
+        self.assertIn(
+            "shell-local-deployer@shell-platform.iam.gserviceaccount.com",
+            self.commands[-1],
+        )
 
 
 if __name__ == "__main__":

@@ -15,7 +15,8 @@ terraform {
 }
 
 provider "google" {
-  # Authentication stays in ADC or a private federation wrapper.
-  project = var.project_id
-  region  = var.region
+  # Use the exact short-lived deployment account after bootstrap.
+  project                     = var.project_id
+  region                      = var.region
+  impersonate_service_account = "shell-local-deployer@${var.project_id}.iam.gserviceaccount.com"
 }

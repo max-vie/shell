@@ -174,7 +174,7 @@ Kubernetes storage and load-balancer behavior.
 
 | Material | Owner | Used by | Private location or handoff |
 | --- | --- | --- | --- |
-| Google application credentials | SUDO and the execution environment | OpenTofu Google provider | Outside the checkout; current source accepts ADC, while the bootstrap root plans short-lived `shell-local-deployer` impersonation and defers external federation |
+| Google application credentials | SUDO and the execution environment | Bootstrap OpenTofu root | Outside the checkout; the initial bootstrap uses the human operator, while operational GCP roots require short-lived `shell-local-deployer` impersonation and external federation remains deferred |
 | Proxmox API token | SUDO | OpenTofu Proxmox provider | Private process environment or wrapper |
 | SSH agent and key material | SUDO and the execution environment | OpenTofu image upload and Ansible | SSH agent or private files outside Git |
 | K3s server token | SUDO | INIT K3s playbooks | Fixed per-cluster path derived by INIT |
