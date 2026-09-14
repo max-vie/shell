@@ -259,3 +259,10 @@ plans, credentials, image staging files, and tunnel state when the owning
 process exits. Local state proves that a handoff was written; provider access,
 guest startup, network reachability, K3s quorum, and recovery need separate
 evidence.
+
+INIT also provides guarded state-backup and restore-check operations for local
+OpenTofu roots. They package the selected state and integrity manifest into an
+age-encrypted bundle, require a SUDO-owned dedicated recipient, and restore
+only into an isolated temporary location for `tofu state list`. They never
+replace live state or perform provider operations. Backup and restore remain
+separate state-operation approvals.

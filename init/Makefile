@@ -10,6 +10,7 @@ LAUNCHER := scripts/run_k3s_runtime.py
 CLUSTER ?= gcp
 BOOTSTRAP_LAUNCHER := scripts/run_gcp_bootstrap.py
 PLATFORM_LAUNCHER := scripts/run_platform_addons.py
+STATE_BACKUP_SCRIPT := scripts/backup_opentofu_state.py
 SYNTAX_INVENTORY := ansible/inventory/hosts.example.yml
 K3S_CONFIGURE_PLAYBOOK := ansible/playbooks/configure-k3s-runtime.yml
 K3S_VERIFY_PLAYBOOK := ansible/playbooks/verify-k3s-runtime.yml
@@ -32,12 +33,16 @@ TOFU_STATE_GATE ?= $(TOFU_PLAN).state-gate
 TOFU_API_GATE ?= $(TOFU_PLAN).api-gate
 TOFU_APPROVAL_RECORD ?= $(TOFU_PLAN).approval.json
 TOFU_ACTION_SUMMARY ?= $(TOFU_PLAN).summary.txt
+STATE_BACKUP_DESTINATION ?=
+STATE_BACKUP_RECIPIENT_FILE ?= $(REPOSITORY_ROOT)/.local/sudo/state-backup/recipient.txt
+STATE_BACKUP_FILE ?=
+STATE_BACKUP_IDENTITY_FILE ?= $(REPOSITORY_ROOT)/.local/sudo/state-backup/age-key.txt
 TOFU_APPROVAL_VALIDATOR := scripts/validate_tofu_approval.py
-export GIT TOFU TOFU_PLAN_BASE TOFU_PROJECT TOFU_ROOT TOFU_COMMIT TOFU_APPROVAL TOFU_VARS TOFU_PLAN TOFU_PLAN_DIGEST TOFU_STATE_GATE TOFU_API_GATE TOFU_APPROVAL_RECORD TOFU_ACTION_SUMMARY
+export GIT TOFU TOFU_PLAN_BASE TOFU_PROJECT TOFU_ROOT TOFU_COMMIT TOFU_APPROVAL TOFU_VARS TOFU_PLAN TOFU_PLAN_DIGEST TOFU_STATE_GATE TOFU_API_GATE TOFU_APPROVAL_RECORD TOFU_ACTION_SUMMARY STATE_BACKUP_DESTINATION STATE_BACKUP_RECIPIENT_FILE STATE_BACKUP_FILE STATE_BACKUP_IDENTITY_FILE
 PLATFORM_SUPPLY := tar/manifests/platform-addons-supply.json
 override ANSIBLE_COLLECTIONS_PATH := $(shell $(PYTHON) -c 'import site; print(site.getusersitepackages() + "/ansible_collections")')
 
-.PHONY: check test k3s-syntax k3s-preview k3s-verify identity-syntax identity-preview identity-apply identity-verify identity-bind-preview identity-bind-apply bootstrap-discover bootstrap-ledger bootstrap-verify opentofu-check tofu-guard tofu-plan tofu-apply tofu-verify gcs-backup-check platform-check platform-preview platform-apply platform-verify registry-trust-preview registry-trust-apply registry-trust-verify
+.PHONY: check test k3s-syntax k3s-preview k3s-verify identity-syntax identity-preview identity-apply identity-verify identity-bind-preview identity-bind-apply bootstrap-discover bootstrap-ledger bootstrap-verify opentofu-check tofu-guard tofu-plan tofu-apply tofu-verify state-backup state-restore-check gcs-backup-check platform-check platform-preview platform-apply platform-verify registry-trust-preview registry-trust-apply registry-trust-verify
 
 # A cold OpenTofu cache may download lockfile-pinned providers. The default
 # check remains independent of provider APIs, backends, state, and guests.
@@ -300,6 +305,36 @@ tofu-verify: tofu-guard
 		set -e; \
 		if [ "$$result" -eq 2 ]; then echo "tofu verify refused: zero-change plan has changes" >&2; exit 2; fi; \
 		test "$$result" -eq 0 || { echo "tofu verify refused: zero-change plan failed" >&2; exit "$$result"; }
+
+state-backup:
+	@set -eu; \
+		test "$(APPROVAL)" = "environment-gcp/init/state-backup" || { echo 'APPROVAL must be environment-gcp/init/state-backup' >&2; exit 2; }; \
+		test -n "$(TOFU_ROOT)" -a -n "$(TOFU_PROJECT)" -a -n "$(TOFU_COMMIT)" -a -n "$(TOFU_PLAN_DIGEST)" || { echo 'TOFU_ROOT, TOFU_PROJECT, TOFU_COMMIT, and TOFU_PLAN_DIGEST are required' >&2; exit 2; }; \
+		test -n "$(STATE_BACKUP_DESTINATION)" || { echo 'STATE_BACKUP_DESTINATION is required' >&2; exit 2; }; \
+		worktree_status="$$( "$(GIT)" -C "$(REPOSITORY_ROOT)" status --porcelain=v1 --untracked-files=all )"; test -z "$$worktree_status" || { echo 'state backup refused: source tree is dirty' >&2; exit 2; }; \
+		actual_commit="$$( "$(GIT)" -C "$(REPOSITORY_ROOT)" rev-parse --verify HEAD )"; test "$$actual_commit" = "$(TOFU_COMMIT)" || { echo 'state backup refused: commit is not HEAD' >&2; exit 2; }; \
+		$(PYTHON) "$(INIT_ROOT)/$(STATE_BACKUP_SCRIPT)" backup \
+			--root "$(TOFU_ROOT)" \
+			--project "$(TOFU_PROJECT)" \
+			--commit "$(TOFU_COMMIT)" \
+			--plan-sha256 "$(TOFU_PLAN_DIGEST)" \
+			--recipient-file "$(STATE_BACKUP_RECIPIENT_FILE)" \
+			--destination-dir "$(STATE_BACKUP_DESTINATION)" \
+			--approval "$(APPROVAL)"
+
+state-restore-check:
+	@set -eu; \
+		test "$(APPROVAL)" = "environment-gcp/init/state-restore" || { echo 'APPROVAL must be environment-gcp/init/state-restore' >&2; exit 2; }; \
+		test -n "$(TOFU_ROOT)" -a -n "$(TOFU_PROJECT)" -a -n "$(TOFU_COMMIT)" -a -n "$(TOFU_PLAN_DIGEST)" || { echo 'TOFU_ROOT, TOFU_PROJECT, TOFU_COMMIT, and TOFU_PLAN_DIGEST are required' >&2; exit 2; }; \
+		test -n "$(STATE_BACKUP_FILE)" || { echo 'STATE_BACKUP_FILE is required' >&2; exit 2; }; \
+		$(PYTHON) "$(INIT_ROOT)/$(STATE_BACKUP_SCRIPT)" restore-check \
+			--root "$(TOFU_ROOT)" \
+			--project "$(TOFU_PROJECT)" \
+			--commit "$(TOFU_COMMIT)" \
+			--plan-sha256 "$(TOFU_PLAN_DIGEST)" \
+			--identity-file "$(STATE_BACKUP_IDENTITY_FILE)" \
+			--backup "$(STATE_BACKUP_FILE)" \
+			--approval "$(APPROVAL)"
 
 gcs-backup-check:
 	$(TOFU) fmt -check -diff "$(GCS_BACKUP_ROOT)"
