@@ -575,7 +575,7 @@ class TestAccessContracts(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(
             stdout.getvalue(),
-            "validated 6 SUDO access profiles and 9 handoff contracts\n",
+            "validated 7 SUDO access profiles and 9 handoff contracts\n",
         )
 
 

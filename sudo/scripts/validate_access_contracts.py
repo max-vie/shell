@@ -19,6 +19,7 @@ CONTRACT_FILES = {
     "keycloak": "keycloak-profile.json",
     "kubernetes": "kubernetes-ecosystem-profile.json",
     "operator": "operator-access-profile.json",
+    "state_backup": "state-backup-profile.json",
 }
 CONTRACT_VERSIONS = {
     "delivery-host-profile": "2.0.0",
@@ -33,6 +34,7 @@ CONTRACT_VERSIONS = {
     "kubernetes-ecosystem-profile": "1.0.0",
     "kubernetes-ecosystem-input-contract": "1.0.0",
     "operator-access-profile": "1.0.0",
+    "state-backup-profile": "1.0.0",
 }
 COMMON_FIELDS = {
     "schema_version",
@@ -275,6 +277,43 @@ def validate_operator(document: dict[str, Any]) -> None:
             "secret_values": "omitted",
         },
         "operator value policy changed",
+    )
+
+
+def validate_state_backup(document: dict[str, Any]) -> None:
+    require_common(
+        document,
+        label="state-backup profile",
+        contract_id="state-backup-profile",
+        consumers=["init"],
+        fields={"key_custody", "restrictions"},
+    )
+    custody = document["key_custody"]
+    require(
+        custody
+        == {
+            "algorithm": "age",
+            "purpose": "opentofu-state-backup",
+            "private_directory": ".local/sudo/state-backup",
+            "private_key": ".local/sudo/state-backup/age-key.txt",
+            "recipient": ".local/sudo/state-backup/recipient.txt",
+            "private_directory_mode": "0700",
+            "private_file_mode": "0600",
+            "owner": "sudo",
+            "backup_approval": "environment-gcp/init/state-backup",
+            "restore_approval": "environment-gcp/init/state-restore",
+        },
+        "state-backup custody changed",
+    )
+    require(
+        document["restrictions"]
+        == {
+            "key_in_repository": False,
+            "key_in_backup_bundle": False,
+            "reuse_existing_input_key": False,
+            "unencrypted_state_on_backup_media": False,
+        },
+        "state-backup restrictions changed",
     )
 
 
@@ -1430,6 +1469,7 @@ def validate_contracts(
     }
     validate_identity(documents["identity"])
     validate_operator(documents["operator"])
+    validate_state_backup(documents["state_backup"])
     validate_freeipa(documents["freeipa"], repository_root)
     validate_freeipa_input_contract(repository_root)
     validate_keycloak(documents["keycloak"], repository_root)

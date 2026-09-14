@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0.0",
+  "contract_id": "state-backup-profile",
+  "description": "Source-only SUDO custody policy for encrypted OpenTofu state backups.",
+  "policy_owner": "sudo",
+  "consumer_owners": ["init"],
+  "proof_status": "source-only",
+  "key_custody": {
+    "algorithm": "age",
+    "purpose": "opentofu-state-backup",
+    "private_directory": ".local/sudo/state-backup",
+    "private_key": ".local/sudo/state-backup/age-key.txt",
+    "recipient": ".local/sudo/state-backup/recipient.txt",
+    "private_directory_mode": "0700",
+    "private_file_mode": "0600",
+    "owner": "sudo",
+    "backup_approval": "environment-gcp/init/state-backup",
+    "restore_approval": "environment-gcp/init/state-restore"
+  },
+  "restrictions": {
+    "key_in_repository": false,
+    "key_in_backup_bundle": false,
+    "reuse_existing_input_key": false,
+    "unencrypted_state_on_backup_media": false
+  }
+}
